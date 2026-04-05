@@ -1,33 +1,52 @@
 package me.sashegdev.zernmc.launcher.utils;
 
+import java.util.jar.Attributes;
+import java.util.jar.Manifest;
+
 public class Version {
 
     public static String getCurrentVersion() {
-        String version = Version.class.getPackage().getImplementationVersion();
-        return (version != null && !version.isBlank()) ? version : "1.0.0";
+        try {
+            // Способ 1: Из манифеста (самый правильный)
+            Manifest manifest = new Manifest(
+                Version.class.getClassLoader().getResourceAsStream("META-INF/MANIFEST.MF")
+            );
+
+            String version = manifest.getMainAttributes().getValue(Attributes.Name.IMPLEMENTATION_VERSION);
+            if (version != null && !version.isBlank()) {
+                return version;
+            }
+
+            // Способ 2: Из Package (запасной)
+            version = Version.class.getPackage().getImplementationVersion();
+            if (version != null && !version.isBlank()) {
+                return version;
+            }
+
+        } catch (Exception ignored) {
+            // если не получилось прочитать манифест — идём дальше
+        }
+
+        // Финальный fallback
+        return "1.0.0";
     }
 
-    /**
-     * Универсальное сравнение версий
-     * Возвращает true, если serverVersion новее currentVersion
-     */
     public static boolean isNewer(String current, String server) {
         if (current == null || server == null) return false;
 
-        // Убираем -SNAPSHOT для сравнения
         current = current.replace("-SNAPSHOT", "").trim();
         server = server.replace("-SNAPSHOT", "").trim();
 
         if (current.equals(server)) return false;
 
-        String[] currentParts = current.split("\\.");
-        String[] serverParts = server.split("\\.");
+        String[] cParts = current.split("\\.");
+        String[] sParts = server.split("\\.");
 
-        int maxLength = Math.max(currentParts.length, serverParts.length);
+        int max = Math.max(cParts.length, sParts.length);
 
-        for (int i = 0; i < maxLength; i++) {
-            int c = i < currentParts.length ? Integer.parseInt(currentParts[i]) : 0;
-            int s = i < serverParts.length ? Integer.parseInt(serverParts[i]) : 0;
+        for (int i = 0; i < max; i++) {
+            int c = i < cParts.length ? Integer.parseInt(cParts[i]) : 0;
+            int s = i < sParts.length ? Integer.parseInt(sParts[i]) : 0;
 
             if (s > c) return true;
             if (s < c) return false;

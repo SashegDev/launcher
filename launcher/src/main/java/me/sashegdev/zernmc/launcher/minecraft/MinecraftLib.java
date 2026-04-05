@@ -10,9 +10,6 @@ import me.sashegdev.zernmc.launcher.utils.ZAnsi;
 
 import java.util.List;
 
-/**
- * Главный фасад MinecraftLib — точка входа для всей логики установки и запуска
- */
 public class MinecraftLib {
 
     private final Instance instance;
@@ -21,11 +18,10 @@ public class MinecraftLib {
         this.instance = instance;
     }
 
-    // ====================== УСТАНОВКА ======================
+    //Очистка
 
-    /**
-     * Установить vanilla версию Minecraft
-     */
+
+    //Установка
     public boolean installMinecraft(String versionId) throws Exception {
         VersionInstaller installer = new VersionInstaller(instance.getPath());
         boolean success = installer.install(versionId);
@@ -42,9 +38,6 @@ public class MinecraftLib {
        return installer.install(minecraftVersion, forgeVersion);
     }
 
-    /**
-     * Установить Fabric для выбранной версии Minecraft
-     */
     public boolean installFabric(String minecraftVersion, String loaderVersion) throws Exception {
         FabricInstaller installer = new FabricInstaller(instance);
         boolean success = installer.install(minecraftVersion, loaderVersion);
@@ -90,23 +83,7 @@ public class MinecraftLib {
         return true;
     }
 
-    // ====================== ЗАПУСК ======================
-
-    /**
-     * Сгенерировать команду запуска (пока заглушка)
-     */
-    public List<String> buildLaunchCommand(LaunchOptions options) throws Exception {
-        System.out.println(ZAnsi.cyan("Генерация команды запуска для " + instance.getName() + "..."));
-
-        // TODO: Полная реализация LaunchCommandBuilder (перенос из MLL)
-
-        System.out.println(ZAnsi.yellow("Генерация команды запуска пока в разработке"));
-        return List.of("java", "-jar", "placeholder.jar", "--version", instance.getName());
-    }
-
-    /**
-     * Запустить сборку
-     */
+    //Запуск
     public void launch(LaunchOptions options) throws Exception {
         System.out.println(ZAnsi.brightGreen("Запуск сборки: " + instance.getName()));
     
@@ -118,7 +95,6 @@ public class MinecraftLib {
             System.out.println("  " + arg);
         }
     
-        // === Реальный запуск ===
         ProcessBuilder pb = new ProcessBuilder(command);
         pb.directory(instance.getPath().toFile());
     
@@ -137,8 +113,6 @@ public class MinecraftLib {
     
         System.out.println(ZAnsi.yellow("\nMinecraft завершился с кодом: " + exitCode));
     }
-
-    // ====================== ГЕТТЕРЫ ======================
 
     public Instance getInstance() {
         return instance;

@@ -7,3 +7,4 @@ server/packs
 server/data
 jre
 .vscode
+launcher/dependency-reduced-pom.xml
