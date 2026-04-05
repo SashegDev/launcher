@@ -1,0 +1,9 @@
+logs/
+__pycache__/
+./.venv/
+launcher/target
+server/builds
+server/packs
+server/data
+jre
+.vscode
