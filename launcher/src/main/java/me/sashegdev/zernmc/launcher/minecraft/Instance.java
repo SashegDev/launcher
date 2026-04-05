@@ -6,6 +6,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+
+
+// ЭТОТ КЛАСС РАБОТАЕТ НЕ ТРОГАТЬ ТОТ КТО БУДЕТ ЧИТАТЬ
 public class Instance {
     private final String name;
     private final Path path;
@@ -13,7 +16,7 @@ public class Instance {
     private String minecraftVersion;
     private String loaderType;      // vanilla, fabric, forge
     private String loaderVersion;
-    private String assetIndex;      // ← ЭТО САМОЕ ВАЖНОЕ
+    private String assetIndex;
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 

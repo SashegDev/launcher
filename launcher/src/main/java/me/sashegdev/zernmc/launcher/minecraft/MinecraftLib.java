@@ -21,15 +21,12 @@ public class MinecraftLib {
         this.instance = instance;
     }
 
-    //Очистка
-
-
     //Установка
     public boolean installMinecraft(String versionId) throws Exception {
         VersionInstaller installer = new VersionInstaller(instance.getPath());
-        
+
         String assetIndex = installer.install(versionId);   // ← теперь возвращается String
-    
+
         if (assetIndex != null && !assetIndex.isEmpty()) {
             instance.setMinecraftVersion(versionId);
             instance.setAssetIndex(assetIndex);      // ← сохраняем правильный индекс!

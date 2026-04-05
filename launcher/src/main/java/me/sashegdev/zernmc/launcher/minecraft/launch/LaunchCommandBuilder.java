@@ -132,15 +132,15 @@ public class LaunchCommandBuilder {
 
     private String buildClasspath() throws Exception {
         List<String> paths = new ArrayList<>();
-    
+
         String versionId = getVersionId(); // ← используем getVersionId()
-    
+
         // Добавляем основной jar
         Path versionJar = instance.getPath()
                 .resolve("versions")
                 .resolve(versionId)
                 .resolve(versionId + ".jar");
-    
+
         if (Files.exists(versionJar)) {
             paths.add(versionJar.toAbsolutePath().toString());
         } else {
@@ -154,7 +154,7 @@ public class LaunchCommandBuilder {
                 paths.add(fallbackJar.toAbsolutePath().toString());
             }
         }
-    
+
         // Все библиотеки
         Path librariesDir = instance.getPath().resolve("libraries");
         if (Files.exists(librariesDir)) {
@@ -164,11 +164,13 @@ public class LaunchCommandBuilder {
                       .forEach(paths::add);
             }
         }
-    
+
         String separator = System.getProperty("os.name").toLowerCase().contains("win") ? ";" : ":";
         return String.join(separator, paths);
     }
 
+
+    // TODO: бля ктонить помогите с этим говном, я рот шатал, форджу не нравится то как я его запускаю
     private String buildForgeClasspath() throws Exception {
         List<String> paths = new ArrayList<>();
 
@@ -300,6 +302,7 @@ public class LaunchCommandBuilder {
         return args;
     }
 
+    //TODO: сделать это говно удобнее
     private List<String> getForgeArguments(LaunchOptions options) {
         List<String> args = new ArrayList<>();
         
@@ -350,6 +353,7 @@ public class LaunchCommandBuilder {
         return args;
     }
 
+    //не трогать, оно работает
     private String getVersionId() {
         String loaderType = instance.getLoaderType().toLowerCase();
         String mcVersion = instance.getMinecraftVersion();
