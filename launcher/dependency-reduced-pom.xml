@@ -20,6 +20,11 @@
               <transformers>
                 <transformer>
                   <mainClass>${mainClass}</mainClass>
+                  <manifestEntries>
+                    <Implementation-Version>${project.version}</Implementation-Version>
+                    <Implementation-Title>ZernMC Launcher</Implementation-Title>
+                    <Implementation-Vendor>SashegDev</Implementation-Vendor>
+                  </manifestEntries>
                 </transformer>
               </transformers>
             </configuration>
