@@ -77,19 +77,49 @@ public class LaunchCommandBuilder {
             jvmArgs.addAll(options.getExtraJvmArgs());
         }
 
+        String loaderType = instance.getLoaderType().toLowerCase();
+        if ("fabric".equals(loaderType)) {
+            jvmArgs.add("--add-modules=ALL-MODULE-PATH");
+            jvmArgs.add("--add-opens=java.base/java.io=ALL-UNNAMED");
+            jvmArgs.add("--add-opens=java.base/java.util=ALL-UNNAMED");
+            jvmArgs.add("--add-opens=java.base/java.lang=ALL-UNNAMED");
+            jvmArgs.add("--add-opens=java.base/java.lang.invoke=ALL-UNNAMED");
+            jvmArgs.add("--add-opens=java.base/java.nio=ALL-UNNAMED");
+            jvmArgs.add("--add-opens=java.base/java.net=ALL-UNNAMED");
+            jvmArgs.add("--add-opens=java.base/sun.nio.ch=ALL-UNNAMED");
+            jvmArgs.add("--add-opens=java.base/java.lang.reflect=ALL-UNNAMED");
+            jvmArgs.add("--add-opens=jdk.unsupported/sun.misc=ALL-UNNAMED");
+        }
+
         return jvmArgs;
     }
 
     private String buildClasspath() throws Exception {
         List<String> paths = new ArrayList<>();
-    
+
+        //String loaderType = instance.getLoaderType().toLowerCase();
         String versionId = getVersionId();
-        Path versionsDir = instance.getPath().resolve("versions");
-    
-        // 1. Основной jar версии (fabric-loader-...-1.20.1.jar)
-        paths.add(versionsDir.resolve(versionId).resolve(versionId + ".jar").toAbsolutePath().toString());
-    
-        // 2. Все библиотеки
+
+        Path versionJar = instance.getPath()
+                .resolve("versions")
+                .resolve(versionId)
+                .resolve(versionId + ".jar");
+
+        if (Files.exists(versionJar)) {
+            paths.add(versionJar.toAbsolutePath().toString());
+        } else {
+            Path altVersionJar = instance.getPath()
+                    .resolve("versions")
+                    .resolve(instance.getMinecraftVersion())
+                    .resolve(instance.getMinecraftVersion() + ".jar");
+
+            if (Files.exists(altVersionJar)) {
+                paths.add(altVersionJar.toAbsolutePath().toString());
+            } else {
+                System.err.println(ZAnsi.yellow("Warning: Vanilla Minecraft jar not found at: " + versionJar));
+            }
+        }
+
         Path librariesDir = instance.getPath().resolve("libraries");
         if (Files.exists(librariesDir)) {
             try (var stream = Files.walk(librariesDir)) {
@@ -98,8 +128,7 @@ public class LaunchCommandBuilder {
                       .forEach(paths::add);
             }
         }
-    
-        // Для Windows используем ";" вместо ":"
+
         String separator = System.getProperty("os.name").toLowerCase().contains("win") ? ";" : ":";
         return String.join(separator, paths);
     }
@@ -108,19 +137,15 @@ public class LaunchCommandBuilder {
         String loaderType = instance.getLoaderType().toLowerCase();
 
         if ("fabric".equals(loaderType)) {
-            String loaderVer = instance.getLoaderVersion();
-            if (loaderVer != null && loaderVer.startsWith("0.9")) {
-                return "net.fabricmc.loader.impl.launch.knot.KnotClient";
-            } else {
-                // Для более новых версий Fabric (0.14+)
-                return "net.fabricmc.loader.impl.launch.knot.KnotClient";
-            }
+            // Fabric 0.14+ использует KnotClient
+            return "net.fabricmc.loader.impl.launch.knot.KnotClient";
         } 
         else if ("forge".equals(loaderType)) {
+            // Forge 1.20.1 использует ClientModLoader
             return "net.minecraftforge.client.loading.ClientModLoader";
         } 
         else {
-            return "net.minecraft.client.main.Main"; // Vanilla
+            return "net.minecraft.client.main.Main";
         }
     }
 
@@ -165,12 +190,21 @@ public class LaunchCommandBuilder {
     }
 
     private String getVersionId() {
-        if ("vanilla".equalsIgnoreCase(instance.getLoaderType())) {
-            return instance.getMinecraftVersion();
-        } else {
-            // Для Fabric/Forge версия выглядит как fabric-loader-... или forge-...
-            return instance.getMinecraftVersion() + "-" + instance.getLoaderType() + "-" + instance.getLoaderVersion();
+        String loaderType = instance.getLoaderType().toLowerCase();
+        String mcVersion = instance.getMinecraftVersion();
+        String loaderVer = instance.getLoaderVersion();
+
+        if ("vanilla".equals(loaderType)) {
+            return mcVersion;
+        } 
+        else if ("fabric".equals(loaderType)) {
+            return mcVersion;
+        } 
+        else if ("forge".equals(loaderType)) {
+            return mcVersion + "-forge-" + loaderVer;
         }
+
+        return mcVersion;
     }
 
     

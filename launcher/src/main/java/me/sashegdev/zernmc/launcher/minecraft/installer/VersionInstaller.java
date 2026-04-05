@@ -25,7 +25,7 @@ public class VersionInstaller {
 
     private final Path minecraftDir;
     private final HttpClient httpClient;
-    private final ExecutorService executor = Executors.newFixedThreadPool(32); // параллельная загрузка
+    private final ExecutorService executor = Executors.newFixedThreadPool(32);
 
     public VersionInstaller(Path minecraftDir) {
         this.minecraftDir = minecraftDir;
