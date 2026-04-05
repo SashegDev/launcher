@@ -52,6 +52,17 @@ public class ProgressBar {
         System.out.flush();
     }
 
+    public static void showAnimated(String label, long current, long total, String unit) {
+        if (total <= 0) {
+            // Анимация для неизвестного размера
+            char[] spinner = {'|', '/', '-', '\\'};
+            int idx = (int) (current / 1024) % 4;
+            System.out.print("\r" + label + " [" + spinner[idx] + "] " + formatBytes(current));
+        } else {
+            show(label, (int) ((current * 100) / total), 100, unit);
+        }
+    }
+
     public static void finish(String message) {
         System.out.println("\r" + ZAnsi.brightGreen(message + " завершено ✓"));
         System.out.flush();
