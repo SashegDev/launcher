@@ -1,4 +1,3 @@
-# pack_manager.py (updated)
 import hashlib
 import os
 from datetime import datetime
@@ -22,7 +21,6 @@ DATA_DIR.mkdir(exist_ok=True)
 MINECRAFT_VERSION_MANIFEST_URL = "https://launchermeta.mojang.com/mc/game/version_manifest.json"
 FABRIC_META_URL = "https://meta.fabricmc.net/v2/versions"
 FORGE_META_URL = "https://files.minecraftforge.net/net/minecraftforge/forge/"
-MinecraftVersion=[]
 
 # Cache for loaded manifests
 _manifest_cache: Dict[str, PackMeta] = {}
@@ -41,8 +39,9 @@ async def calculate_sha256(file_path: Path) -> str:
             hash_sha.update(chunk)
     return hash_sha.hexdigest()
 
-async def get_minecraft_versions() -> List[MinecraftVersion]:
+async def get_minecraft_versions():
     """Fetch available Minecraft versions from Mojang"""
+    from models import MinecraftVersion
     async with aiohttp.ClientSession() as session:
         async with session.get(MINECRAFT_VERSION_MANIFEST_URL) as response:
             data = await response.json()
@@ -72,21 +71,17 @@ async def get_forge_versions(minecraft_version: str) -> List[str]:
     async with aiohttp.ClientSession() as session:
         async with session.get(FORGE_META_URL) as response:
             # Forge API is more complex, simplified for now
-            # You might want to use a proper forge API
-            return []  # Placeholder
+            return []
 
 async def download_minecraft_version(version: str, target_path: Path) -> bool:
     """Download Minecraft version JSON and client jar"""
-    # Get version manifest
     async with aiohttp.ClientSession() as session:
         async with session.get(f"https://piston-meta.mojang.com/mc/game/{version}/{version}.json") as response:
             if response.status == 200:
                 version_data = await response.json()
-                # Save version JSON
                 async with aiofiles.open(target_path / f"{version}.json", 'w') as f:
                     await f.write(json.dumps(version_data, indent=2))
                 
-                # Download client jar
                 downloads = version_data.get("downloads", {})
                 client_info = downloads.get("client", {})
                 if client_info:
@@ -109,20 +104,22 @@ async def scan_pack(pack_name: str, force_rescan: bool = False) -> PackMeta:
     meta_path = get_meta_path(pack_name)
     current_meta: Optional[PackMeta] = None
 
-    # Check if we have cached version and force_rescan is False
     if not force_rescan and pack_name in _manifest_cache:
         return _manifest_cache[pack_name]
 
     if meta_path.exists():
         async with aiofiles.open(meta_path, 'r', encoding='utf-8') as f:
             data = json.loads(await f.read())
-            current_meta = PackMeta.model_validate(data)
+            try:
+                current_meta = PackMeta.model_validate(data)
+            except Exception as e:
+                logger.warning(f"Failed to validate existing meta for pack {pack_name}", error=str(e))
+                current_meta = None
 
     new_files: Dict[str, FileEntry] = {}
     changed = False
 
     for root, dirs, files in os.walk(pack_path):
-        # Filter ignored directories
         ignored = current_meta.ignored_dirs if current_meta else []
         dirs[:] = [d for d in dirs if d not in ignored]
 
@@ -130,7 +127,6 @@ async def scan_pack(pack_name: str, force_rescan: bool = False) -> PackMeta:
             file_path = Path(root) / file
             rel_path = file_path.relative_to(pack_path).as_posix()
 
-            # Skip files in ignored directories
             if any(ignored_dir in rel_path.split('/') for ignored_dir in ignored):
                 continue
 
@@ -151,27 +147,43 @@ async def scan_pack(pack_name: str, force_rescan: bool = False) -> PackMeta:
                                  current_meta.files[rel_path].hash != file_hash):
                 changed = True
 
-    # Update manifest if changes detected or new pack
     if not current_meta or changed or len(new_files) != len(current_meta.files if current_meta else 0):
         version = (current_meta.version + 1) if current_meta else 1
+        
+        pack_config_path = pack_path / "instance.json"
+        minecraft_version = "1.20.4"
+        loader_type = "vanilla"
+        loader_version = None
+        
+        if pack_config_path.exists():
+            try:
+                async with aiofiles.open(pack_config_path, 'r', encoding='utf-8') as f:
+                    config = json.loads(await f.read())
+                    minecraft_version = config.get("minecraftVersion", minecraft_version)
+                    loader_type = config.get("loaderType", loader_type)
+                    loader_version = config.get("loaderVersion")
+            except Exception as e:
+                logger.warning(f"Failed to load instance.json for {pack_name}", error=str(e))
+        
         new_meta = PackMeta(
             pack_name=pack_name,
             version=version,
             files=new_files,
             updated_at=datetime.utcnow(),
-            ignored_dirs=current_meta.ignored_dirs if current_meta else []
+            ignored_dirs=current_meta.ignored_dirs if current_meta else [],
+            minecraft_version=minecraft_version,
+            loader_type=loader_type,
+            loader_version=loader_version
         )
         
         async with aiofiles.open(meta_path, 'w', encoding='utf-8') as f:
             await f.write(new_meta.model_dump_json(indent=2))
         
-        # Update memory cache
         _manifest_cache[pack_name] = new_meta
         
-        logger.info("Pack updated", pack=pack_name, new_version=version, files_count=len(new_files))
+        logger.info(f"Pack updated: {pack_name} v{version}, {len(new_files)} files")
         return new_meta
     
-    # Update cache with existing manifest
     if current_meta:
         _manifest_cache[pack_name] = current_meta
     

@@ -1,4 +1,3 @@
-# main.py
 import os
 
 from fastapi import FastAPI, HTTPException, Request
@@ -11,7 +10,6 @@ from cachetools import TTLCache
 import asyncio
 import logging
 from datetime import datetime
-import asyncio
 from uvicorn.protocols.http.httptools_impl import HttpToolsProtocol
 
 # Import local modules
@@ -24,10 +22,6 @@ from log_manager import init_logging, get_logger
 
 from models import MinecraftVersion
 from pack_manager import get_minecraft_versions, download_minecraft_version
-
-import minecraft_launcher_lib.command as mcl_command
-import minecraft_launcher_lib.utils as mcl_utils
-from pathlib import Path
 
 logger = structlog.get_logger(__name__)
 
@@ -300,77 +294,6 @@ async def get_pack_manifest(pack_name: str, request: Request):
         content=meta_dict,
         headers={"X-Pack-Version": str(meta.version), "X-Cached": "false"}
     )
-
-@app.post("/pack/{pack_name}/launch")
-async def get_launch_command(
-    pack_name: str,
-    request: Request,
-    options: dict  # клиент присылает: {"username": "...", "uuid": "...", "token": "...", "gameDir": "...", "javaPath": "...", "maxMemory": 4096}
-):
-    client_ip = request.client.host if request.client else "unknown"
-    logger.info("Launch command requested", pack=pack_name, client_ip=client_ip)
-
-    try:
-        meta = get_cached_manifest(pack_name) or await scan_pack(pack_name)
-    except Exception as e:
-        raise HTTPException(404, "Pack not found") from e
-
-    # Базовые опции для minecraft-launcher-lib
-    launch_options = {
-        "username": options.get("username", "Player"),
-        "uuid": options.get("uuid", "00000000-0000-0000-0000-000000000000"),
-        "token": options.get("token", "token"),
-        "gameDirectory": options.get("gameDir", str(Path("."))),  # относительный
-        "executablePath": options.get("javaPath", "java"),       # или полный путь
-        "maxMemory": options.get("maxMemory", 4096),
-        "customResolution": options.get("customResolution", False),
-        # можно добавить width/height и т.д.
-    }
-
-    # minecraft_directory — это корень пака у клиента (куда скачаны файлы)
-    minecraft_dir = launch_options["gameDirectory"]
-
-    try:
-        # Генерируем команду (библиотека сама обработает Fabric/Forge через version.json)
-        command_list = mcl_command.get_minecraft_command(
-            version=meta.minecraft_version,
-            minecraft_directory=minecraft_dir,
-            options=launch_options
-        )
-
-        # Превращаем абсолютные пути в относительные (очень важно для портативности)
-        relative_command = []
-        game_dir_path = Path(minecraft_dir).resolve()
-
-        for arg in command_list:
-            try:
-                arg_path = Path(arg)
-                if arg_path.is_absolute() and game_dir_path in arg_path.parents:
-                    rel = arg_path.relative_to(game_dir_path).as_posix()
-                    relative_command.append(f"./{rel}" if os.name != "nt" else rel.replace("/", "\\"))
-                else:
-                    relative_command.append(arg)
-            except Exception:
-                relative_command.append(arg)
-
-        # Дополнительно: если в PackMeta есть свои jvmArgs/gameArgs — мерджим
-        if hasattr(meta, 'launch') and meta.launch:
-            # Добавляем кастомные jvmArgs в начало и т.д.
-            pass
-
-        return {
-            "version": meta.version,
-            "minecraftVersion": meta.minecraft_version,
-            "loaderType": meta.loader_type,
-            "command": relative_command,           # список строк — готов к subprocess
-            "workingDirectory": ".",               # относительный
-            "mainClass": meta.launch.mainClass if hasattr(meta, 'launch') else None,
-            "classpath": meta.launch.classpath if hasattr(meta, 'launch') else []
-        }
-
-    except Exception as e:
-        logger.error("Failed to generate launch command", pack=pack_name, error=str(e), exc_info=True)
-        raise HTTPException(500, f"Failed to generate launch command: {str(e)}")
 
 @app.get("/pack/{pack_name}/file/{file_path:path}")
 async def get_pack_file(pack_name: str, file_path: str, request: Request):
