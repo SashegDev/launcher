@@ -17,20 +17,22 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class VersionInstaller {
 
     private final Path minecraftDir;
     private final HttpClient httpClient;
+    private final ExecutorService executor = Executors.newFixedThreadPool(32); // параллельная загрузка
 
     public VersionInstaller(Path minecraftDir) {
         this.minecraftDir = minecraftDir;
         this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(30))
+                .connectTimeout(Duration.ofSeconds(15))
                 .build();
     }
-
-    // getAvailableVersions() оставляем как было (с исправлением времени)
 
     public List<MinecraftVersion> getAvailableVersions() throws Exception {
         String jsonString = downloadString("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json");
@@ -54,9 +56,8 @@ public class VersionInstaller {
         return versions;
     }
 
-    public boolean install(String versionId) throws Exception {
+    public String install(String versionId) throws Exception {   // ← поменял boolean на String
         System.out.println(ZAnsi.cyan("Полная установка Minecraft " + versionId + "..."));
-
         Path versionDir = minecraftDir.resolve("versions").resolve(versionId);
         Files.createDirectories(versionDir);
 
@@ -77,13 +78,16 @@ public class VersionInstaller {
         downloadLibraries(versionData.getJSONArray("libraries"));
 
         // Ассеты
+        String assetIndex = versionData.getString("assets");   // ← ВОТ ЭТО ГЛАВНОЕ!
+
         if (versionData.has("assetIndex")) {
             System.out.println(ZAnsi.cyan("Скачивание ассетов..."));
             downloadAssets(versionData);
+            System.out.println(ZAnsi.brightGreen("Asset index определён как: " + assetIndex));
         }
 
         System.out.println(ZAnsi.brightGreen("\nMinecraft " + versionId + " полностью установлен!"));
-        return true;
+        return assetIndex;   // ← возвращаем настоящий assetIndex (например "30")
     }
 
     private void downloadLibraries(JSONArray libraries) throws Exception {
@@ -103,11 +107,11 @@ public class VersionInstaller {
                 try {
                     downloadFile(url, target, "library");
                 } catch (Exception e) {
-                    // Многие библиотеки могут быть пропущены — это нормально
+                    // Пропускаем проблемные библиотеки
                 }
             }
             count++;
-            if (count % 20 == 0) ProgressBar.show("Библиотеки", count, total, "");
+            ProgressBar.show("Библиотеки", count, total, "файлов");
         }
         ProgressBar.finish("Библиотеки загружены");
     }
@@ -117,19 +121,29 @@ public class VersionInstaller {
         String indexUrl = assetIndexInfo.getString("url");
         String indexId = versionData.getString("assets");
 
-        Path indexPath = minecraftDir.resolve("assets/indexes").resolve(indexId + ".json");
-        Files.createDirectories(indexPath.getParent());
+        Path indexesDir = minecraftDir.resolve("assets/indexes");
+        Files.createDirectories(indexesDir);
+        Path indexPath = indexesDir.resolve(indexId + ".json");
+
+        System.out.println(ZAnsi.cyan("Скачивание asset index (" + indexId + ")..."));
         downloadFile(indexUrl, indexPath, "asset index");
 
-        String assetsJson = new String(Files.readAllBytes(indexPath));
-        JSONObject objects = new JSONObject(assetsJson).getJSONObject("objects");
+        String jsonContent = Files.readString(indexPath);
+        JSONObject root = new JSONObject(jsonContent);
+        JSONObject objects = root.getJSONObject("objects");
 
-        System.out.println(ZAnsi.cyan("Скачивание " + objects.length() + " объектов ассетов..."));
+        System.out.println(ZAnsi.cyan("Скачивание " + objects.length() + " объектов ассетов (index: " + indexId + ")..."));
 
-        int count = 0;
-        int failed = 0;
+        int total = objects.length();
+        int[] success = {0};
+        int[] failed = {0};
 
-        for (String hash : objects.keySet()) {
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
+
+        for (String key : objects.keySet()) {
+            JSONObject asset = objects.getJSONObject(key);
+            String hash = asset.getString("hash");  // ← вот это правильный хеш!
+
             String url = "https://resources.download.minecraft.net/" + hash.substring(0, 2) + "/" + hash;
             Path target = minecraftDir.resolve("assets/objects")
                     .resolve(hash.substring(0, 2))
@@ -137,22 +151,42 @@ public class VersionInstaller {
 
             Files.createDirectories(target.getParent());
 
-            try {
-                downloadFile(url, target, "");   // пустой label = ассет
-                count++;
-            } catch (Exception e) {
-                failed++;
-            }
+            CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+                boolean downloaded = false;
+                for (int attempt = 1; attempt <= 3; attempt++) {
+                    try {
+                        downloadFile(url, target, "");
+                        synchronized (this) {
+                            success[0]++;
+                            ProgressBar.show("Ассеты", success[0], total, "файлов");
+                        }
+                        downloaded = true;
+                        break;
+                    } catch (Exception e) {
+                        if (attempt == 3) {
+                            synchronized (this) {
+                                failed[0]++;
+                            }
+                            System.err.println("Не удалось скачать " + hash);
+                        } else {
+                            try { Thread.sleep(500 * attempt); } catch (InterruptedException ignored) {}
+                        }
+                    }
+                }
+            }, executor);
 
-            ProgressBar.show("Ассеты", count, objects.length(), "файлов");
+            futures.add(future);
         }
 
-        ProgressBar.finish("Ассеты загружены (" + count + " успешно, " + failed + " пропущено)");
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+        ProgressBar.finish("Ассеты загружены (" + success[0] + " успешно, " + failed[0] + " пропущено)");
+
+        if (failed[0] > 0) {
+            System.out.println(ZAnsi.yellow("Предупреждение: " + failed[0] + " файлов ассетов не удалось скачать."));
+            System.out.println(ZAnsi.yellow("Игра запустится, но некоторые текстуры/звуки могут отсутствовать."));
+        }
     }
-
-
-    
-    // === Вспомогательные методы ===
 
     private String getVersionUrl(String versionId) throws Exception {
         for (MinecraftVersion v : getAvailableVersions()) {
@@ -174,33 +208,21 @@ public class VersionInstaller {
             System.out.println(ZAnsi.cyan("Скачивание " + label + "..."));
         }
 
-        try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .GET()
-                    .build();
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .GET()
+                .build();
 
-            HttpResponse<Path> response = httpClient.send(request, HttpResponse.BodyHandlers.ofFile(target));
+        HttpResponse<Path> response = httpClient.send(request, HttpResponse.BodyHandlers.ofFile(target));
 
-            if (response.statusCode() != 200) {
-                // Для ассетов 404 — это нормально, просто пропускаем
-                if (label.isEmpty()) {
-                    return; // тихий пропуск для ассетов
-                }
-                throw new IOException("HTTP " + response.statusCode());
-            }
+        if (response.statusCode() != 200) {
+            if (label.isEmpty()) return; // для ассетов молча
+            throw new IOException("HTTP " + response.statusCode() + " при скачивании " + label);
+        }
 
-            if (!label.isEmpty()) {
-                long size = Files.size(target);
-                ProgressBar.finish(label + " (" + ProgressBar.formatBytes(size) + ")");
-            }
-
-        } catch (Exception e) {
-            if (!label.isEmpty()) {
-                // Для важных файлов (client.jar, библиотеки, index) — ошибка
-                throw e;
-            }
-            // Для ассетов — просто пропускаем молча
+        if (!label.isEmpty()) {
+            long size = Files.size(target);
+            ProgressBar.finish(label + " (" + ProgressBar.formatBytes(size) + ")");
         }
     }
 }

@@ -28,20 +28,23 @@ public class FabricInstaller {
         System.out.println(ZAnsi.cyan("Установка Fabric " + loaderVersion + " для Minecraft " + minecraftVersion));
 
         Path instancePath = instance.getPath();
-
         cleanOldFabricLoaders();
 
-        // Шаг 1: Установка vanilla версии (если ещё не установлена)
+        // Шаг 1: Устанавливаем vanilla и получаем assetIndex
         VersionInstaller versionInstaller = new VersionInstaller(instancePath);
-        boolean mcOk = versionInstaller.install(minecraftVersion);
-        if (!mcOk) {
+        String assetIndex = versionInstaller.install(minecraftVersion);   // ← теперь String
+
+        if (assetIndex == null || assetIndex.isEmpty()) {
             System.out.println(ZAnsi.brightRed("Не удалось установить Minecraft " + minecraftVersion));
             return false;
         }
 
+        // Сохраняем assetIndex
+        instance.setAssetIndex(assetIndex);
+
         // Шаг 2: Скачивание и запуск Fabric Installer
         String installerVersion = getLatestInstallerVersion();
-        String installerUrl = "https://maven.fabricmc.net/net/fabricmc/fabric-installer/" 
+        String installerUrl = "https://maven.fabricmc.net/net/fabricmc/fabric-installer/"
                 + installerVersion + "/fabric-installer-" + installerVersion + ".jar";
 
         Path installerJar = instancePath.resolve("fabric-installer.jar");
@@ -50,9 +53,7 @@ public class FabricInstaller {
         downloadFile(installerUrl, installerJar);
         ProgressBar.finish("Fabric Installer скачан");
 
-        // Шаг 3: Запуск Fabric Installer
         System.out.println(ZAnsi.cyan("Запуск Fabric Installer..."));
-
         ProcessBuilder pb = new ProcessBuilder(
                 "java", "-jar", installerJar.toAbsolutePath().toString(),
                 "client",
@@ -62,7 +63,6 @@ public class FabricInstaller {
                 "-noprofile",
                 "-snapshot"
         );
-
         pb.redirectOutput(ProcessBuilder.Redirect.INHERIT);
         pb.redirectError(ProcessBuilder.Redirect.INHERIT);
 
@@ -74,13 +74,18 @@ public class FabricInstaller {
             return false;
         }
 
-        // Шаг 4: Проверка, что Fabric версия появилась
+        // Проверка результата
         String fabricVersionId = "fabric-loader-" + loaderVersion + "-" + minecraftVersion;
         Path fabricVersionDir = instancePath.resolve("versions").resolve(fabricVersionId);
 
         if (Files.exists(fabricVersionDir)) {
             System.out.println(ZAnsi.brightGreen("Fabric успешно установлен!"));
             System.out.println("Версия: " + fabricVersionId);
+
+            instance.setMinecraftVersion(minecraftVersion);
+            instance.setLoaderType("fabric");
+            instance.setLoaderVersion(loaderVersion);
+
             return true;
         } else {
             System.out.println(ZAnsi.brightRed("Fabric Installer отработал, но версия не найдена."));

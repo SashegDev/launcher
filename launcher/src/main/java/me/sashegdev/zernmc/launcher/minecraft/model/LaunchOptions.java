@@ -11,6 +11,8 @@ public class LaunchOptions {
     private boolean fullscreen = false;
     private String javaPath = "java";
     private List<String> extraJvmArgs = new ArrayList<>();
+    private int width = 854;
+    private int height = 480;
 
     // Геттеры и сеттеры
     public String getUsername() { return username; }
@@ -33,4 +35,7 @@ public class LaunchOptions {
 
     public List<String> getExtraJvmArgs() { return extraJvmArgs; }
     public void setExtraJvmArgs(List<String> extraJvmArgs) { this.extraJvmArgs = extraJvmArgs; }
+
+    public int getWidth() { return width; }
+    public int getHeight() { return height; }
 }

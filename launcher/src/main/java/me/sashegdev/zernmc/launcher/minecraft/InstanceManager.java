@@ -31,6 +31,35 @@ public class InstanceManager {
         }
         return null;
     }
+    
+    public static boolean deleteInstance(String instanceName) {
+        if (instanceName == null || instanceName.isBlank()) {
+            return false;
+        }
+
+        Path instancePath = INSTANCES_DIR.resolve(instanceName);
+
+        if (!Files.exists(instancePath)) {
+            return false;
+        }
+
+        try {
+            // Рекурсивно удаляем всю папку сборки
+            Files.walk(instancePath)
+                 .sorted((a, b) -> b.compareTo(a)) // удаляем снизу вверх
+                 .forEach(path -> {
+                     try {
+                         Files.deleteIfExists(path);
+                     } catch (IOException e) {
+                         System.err.println("Не удалось удалить: " + path);
+                     }
+                 });
+            return true;
+        } catch (IOException e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
 
     public static boolean createInstanceFolder(String name) throws IOException {
         Path path = INSTANCES_DIR.resolve(name);

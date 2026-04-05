@@ -8,6 +8,7 @@ import me.sashegdev.zernmc.launcher.minecraft.model.LaunchOptions;
 import me.sashegdev.zernmc.launcher.minecraft.model.MinecraftVersion;
 import me.sashegdev.zernmc.launcher.ui.ArrowMenu;
 import me.sashegdev.zernmc.launcher.utils.ConsoleUtils;
+import me.sashegdev.zernmc.launcher.utils.Input;
 import me.sashegdev.zernmc.launcher.utils.ZAnsi;
 import me.sashegdev.zernmc.launcher.utils.ZHttpClient;
 
@@ -219,16 +220,31 @@ public class LaunchMenu {
     }
 
     private void deleteInstance(Instance instance) throws IOException {
-        System.out.println(ZAnsi.brightRed("Вы действительно хотите удалить сборку '" + instance.getName() + "'?"));
-        System.out.print(ZAnsi.white("Введите 'да' для подтверждения: "));
-        String confirm = new java.util.Scanner(System.in).nextLine().trim();
-
-        if ("да".equalsIgnoreCase(confirm)) {
-            InstanceManager.getInstance(instance.getName());
-            System.out.println(ZAnsi.brightGreen("Сборка удалена."));
+        ConsoleUtils.clearScreen();
+        
+        List<String> confirmOptions = List.of(
+            "Да, удалить сборку",
+            "Нет, отменить"
+        );
+    
+        ArrowMenu confirmMenu = new ArrowMenu(
+            "Вы действительно хотите удалить сборку '" + instance.getName() + "'?", 
+            confirmOptions
+        );
+    
+        int choice = confirmMenu.show();
+    
+        if (choice == 0) {  // "Да, удалить"
+            boolean deleted = InstanceManager.deleteInstance(instance.getName());
+            if (deleted) {
+                System.out.println(ZAnsi.brightGreen("Сборка '" + instance.getName() + "' успешно удалена."));
+            } else {
+                System.out.println(ZAnsi.brightRed("Не удалось удалить сборку."));
+            }
         } else {
-            System.out.println(ZAnsi.yellow("Отменено."));
+            System.out.println(ZAnsi.yellow("Удаление отменено."));
         }
+    
         ConsoleUtils.pause();
     }
 
@@ -282,7 +298,7 @@ public class LaunchMenu {
 
     private String askPackName() {
         System.out.print(ZAnsi.white("\nВведите название новой сборки: "));
-        String name = new java.util.Scanner(System.in).nextLine().trim();
+        String name = Input.readLine();           // используем наш Input
         if (name.isEmpty()) {
             System.out.println(ZAnsi.yellow("Отменено."));
             return null;

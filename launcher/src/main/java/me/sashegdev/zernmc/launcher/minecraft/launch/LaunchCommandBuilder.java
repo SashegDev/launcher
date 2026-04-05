@@ -136,15 +136,30 @@ public class LaunchCommandBuilder {
         args.add("--assetsDir");
         args.add(instance.getPath().resolve("assets").toAbsolutePath().toString());
 
-        if (options.getUsername() != null) {
-            args.add("--username");
-            args.add(options.getUsername());
-        } else {
-            args.add("--username");
-            args.add("Player");
-        }
+        args.add("--assetIndex");
+        args.add(instance.getAssetIndex());
 
-        // Можно добавить --width, --height, --server и т.д. позже
+        args.add("--username");
+        args.add(options.getUsername() != null ? options.getUsername() : "Player");
+
+        args.add("--accessToken");
+        args.add("0");   // потом токен от блядкого сервера
+
+        args.add("--uuid");
+        args.add("00000000-0000-0000-0000-000000000000");  // тоже потом от блядкого сервера
+
+        args.add("--userType");
+        args.add("legacy");
+
+        // Дополнительные параметры
+        if (options.getWidth() > 0) {
+            args.add("--width");
+            args.add(String.valueOf(options.getWidth()));
+        }
+        if (options.getHeight() > 0) {
+            args.add("--height");
+            args.add(String.valueOf(options.getHeight()));
+        }
 
         return args;
     }

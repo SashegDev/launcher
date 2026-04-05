@@ -32,7 +32,13 @@ public class Input {
             if (value >= min && value <= max) {
                 return value;
             }
-            System.out.println(ZAnsi.brightRed("Значение должно быть от " + min + " до " + max));
+            System.out.println(ZAnsi.brightRed("Значение должно быть от " + min + " до " + max + "."));
         }
+    }
+
+    public static boolean confirm(String prompt) {
+        System.out.print(prompt + " (да/нет): ");
+        String answer = scanner.nextLine().trim().toLowerCase();
+        return answer.equals("да") || answer.equals("y") || answer.equals("yes");
     }
 }
