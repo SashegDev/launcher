@@ -51,7 +51,6 @@ public class Instance {
         saveMetadata();
     }
 
-    /** Возвращает ТОТ САМЫЙ assetIndex, который сохранился при установке (например 30) */
     public String getAssetIndex() {
         return assetIndex != null ? assetIndex : minecraftVersion; // fallback для старых сборок
     }
@@ -67,6 +66,7 @@ public class Instance {
 
     public void setFabricVersionId(String fabricVersionId) {
         this.fabricVersionId = fabricVersionId;
+        saveMetadata();
     }
 
 

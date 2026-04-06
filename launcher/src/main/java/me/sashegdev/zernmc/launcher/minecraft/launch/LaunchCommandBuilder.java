@@ -39,27 +39,15 @@ public class LaunchCommandBuilder {
         String loaderType = instance.getLoaderType().toLowerCase();
         
         if ("forge".equals(loaderType)) {
-            // Forge требует особого порядка аргументов
             command.addAll(getForgeJvmArguments());
-            
-            // Forge специфичный classpath
             command.add("-cp");
             command.add(buildForgeClasspath());
-            
-            // Главный класс для Forge
             command.add("cpw.mods.modlauncher.Launcher");
-            
-            // Аргументы Forge
             command.addAll(getForgeArguments(options));
         } else {
-            // Стандартный classpath для vanilla/fabric
             command.add("-cp");
             command.add(buildClasspath());
-            
-            // Главный класс
             command.add(getMainClass());
-            
-            // Стандартные аргументы Minecraft
             command.addAll(getMinecraftArguments(options));
         }
 
@@ -109,7 +97,6 @@ public class LaunchCommandBuilder {
     private List<String> getForgeJvmArguments() {
         List<String> jvmArgs = new ArrayList<>();
         
-        // Критические аргументы для Forge
         jvmArgs.add("--add-modules=ALL-MODULE-PATH");
         jvmArgs.add("--add-opens=java.base/java.util.jar=ALL-UNNAMED");
         jvmArgs.add("--add-opens=java.base/java.lang.invoke=ALL-UNNAMED");
@@ -121,7 +108,6 @@ public class LaunchCommandBuilder {
         jvmArgs.add("--add-opens=java.base/sun.nio.ch=ALL-UNNAMED");
         jvmArgs.add("--add-opens=jdk.unsupported/sun.misc=ALL-UNNAMED");
         
-        // Forge специфичные свойства
         jvmArgs.add("-Dforge.logging.console.level=debug");
         jvmArgs.add("-Dforge.logging.mojang.level=info");
         jvmArgs.add("-DignoreList=bootstraplauncher,securejarhandler,asm-commons,asm-util,asm-analysis,asm-tree,asm,JarJarFileSystems,client-extra,fmlcore,javafmllanguage,lowcodelanguage,mclanguage,forge-");
@@ -133,9 +119,8 @@ public class LaunchCommandBuilder {
     private String buildClasspath() throws Exception {
         List<String> paths = new ArrayList<>();
 
-        String versionId = getVersionId(); // ← используем getVersionId()
+        String versionId = getVersionId();
 
-        // Добавляем основной jar
         Path versionJar = instance.getPath()
                 .resolve("versions")
                 .resolve(versionId)
@@ -144,7 +129,6 @@ public class LaunchCommandBuilder {
         if (Files.exists(versionJar)) {
             paths.add(versionJar.toAbsolutePath().toString());
         } else {
-            // Fallback на vanilla версию
             String mcVersion = instance.getMinecraftVersion();
             Path fallbackJar = instance.getPath()
                     .resolve("versions")
@@ -155,7 +139,6 @@ public class LaunchCommandBuilder {
             }
         }
 
-        // Все библиотеки
         Path librariesDir = instance.getPath().resolve("libraries");
         if (Files.exists(librariesDir)) {
             try (var stream = Files.walk(librariesDir)) {
@@ -169,16 +152,13 @@ public class LaunchCommandBuilder {
         return String.join(separator, paths);
     }
 
-
-    // TODO: бля ктонить помогите с этим говном, я рот шатал, форджу не нравится то как я его запускаю
     private String buildForgeClasspath() throws Exception {
         List<String> paths = new ArrayList<>();
 
-        String versionId = getVersionId(); // ← используем getVersionId()
+        String versionId = getVersionId();
         String mcVersion = instance.getMinecraftVersion();
         String forgeVersion = instance.getLoaderVersion();
 
-        // 1. Сначала добавляем все библиотеки из libraries
         Path librariesDir = instance.getPath().resolve("libraries");
         if (Files.exists(librariesDir)) {
             try (var stream = Files.walk(librariesDir)) {
@@ -188,7 +168,6 @@ public class LaunchCommandBuilder {
             }
         }
 
-        // 2. Добавляем jar версии (используя versionId)
         Path versionJar = instance.getPath()
                 .resolve("versions")
                 .resolve(versionId)
@@ -196,7 +175,6 @@ public class LaunchCommandBuilder {
         if (Files.exists(versionJar)) {
             paths.add(0, versionJar.toAbsolutePath().toString());
         } else {
-            // Fallback на vanilla jar
             Path vanillaJar = instance.getPath()
                     .resolve("versions")
                     .resolve(mcVersion)
@@ -206,7 +184,6 @@ public class LaunchCommandBuilder {
             }
         }
 
-        // 3. Добавляем Forge universal jar
         Path forgeUniversal = instance.getPath()
                 .resolve("libraries")
                 .resolve("net")
@@ -218,7 +195,6 @@ public class LaunchCommandBuilder {
             paths.add(forgeUniversal.toAbsolutePath().toString());
         }
 
-        // 4. Добавляем Forge client jar
         Path forgeClient = instance.getPath()
                 .resolve("libraries")
                 .resolve("net")
@@ -230,7 +206,6 @@ public class LaunchCommandBuilder {
             paths.add(forgeClient.toAbsolutePath().toString());
         }
 
-        // 5. Добавляем fmlcore и другие Forge модули
         String[] forgeModules = {"fmlcore", "javafmllanguage", "lowcodelanguage", "mclanguage"};
         for (String module : forgeModules) {
             Path modulePath = instance.getPath()
@@ -263,6 +238,9 @@ public class LaunchCommandBuilder {
         }
     }
 
+    /**
+     * ИСПРАВЛЕНО: используем instance.getAssetIndex() вместо minecraftVersion
+     */
     private List<String> getMinecraftArguments(LaunchOptions options) {
         List<String> args = new ArrayList<>();
 
@@ -275,8 +253,16 @@ public class LaunchCommandBuilder {
         args.add("--assetsDir");
         args.add(instance.getPath().resolve("assets").toAbsolutePath().toString());
 
+        // FIXED: Используем правильный assetIndex
         args.add("--assetIndex");
-        args.add(instance.getAssetIndex());
+        String assetIndex = instance.getAssetIndex();
+        if (assetIndex == null || assetIndex.isEmpty()) {
+            assetIndex = instance.getMinecraftVersion();
+            System.out.println(ZAnsi.yellow("Asset index не найден, использую версию: " + assetIndex));
+        } else {
+            System.out.println(ZAnsi.green("Использую asset index: " + assetIndex));
+        }
+        args.add(assetIndex);
 
         args.add("--username");
         args.add(options.getUsername() != null ? options.getUsername() : "Player");
@@ -302,11 +288,12 @@ public class LaunchCommandBuilder {
         return args;
     }
 
-    //TODO: сделать это говно удобнее
+    /**
+     * ИСПРАВЛЕНО: для Forge тоже используем правильный assetIndex
+     */
     private List<String> getForgeArguments(LaunchOptions options) {
         List<String> args = new ArrayList<>();
         
-        // Forge требует специфические аргументы в правильном порядке
         args.add("--launchTarget");
         args.add("forgeclient");
         
@@ -319,15 +306,19 @@ public class LaunchCommandBuilder {
         args.add("--fml.forgeGroup");
         args.add("net.minecraftforge");
         
-        // Добавляем стандартные аргументы Minecraft (Forge их тоже принимает)
         args.add("--gameDir");
         args.add(instance.getPath().toAbsolutePath().toString());
         
         args.add("--assetsDir");
         args.add(instance.getPath().resolve("assets").toAbsolutePath().toString());
         
+        // FIXED: Используем правильный assetIndex для Forge
         args.add("--assetIndex");
-        args.add(instance.getAssetIndex());
+        String assetIndex = instance.getAssetIndex();
+        if (assetIndex == null || assetIndex.isEmpty()) {
+            assetIndex = instance.getMinecraftVersion();
+        }
+        args.add(assetIndex);
         
         args.add("--username");
         args.add(options.getUsername() != null ? options.getUsername() : "Player");
@@ -353,7 +344,9 @@ public class LaunchCommandBuilder {
         return args;
     }
 
-    //не трогать, оно работает
+    /**
+     * ИСПРАВЛЕНО: для Fabric используем сохраненный fabricVersionId
+     */
     private String getVersionId() {
         String loaderType = instance.getLoaderType().toLowerCase();
         String mcVersion = instance.getMinecraftVersion();
@@ -363,11 +356,15 @@ public class LaunchCommandBuilder {
             return mcVersion;
         } 
         else if ("fabric".equals(loaderType)) {
-            // Fabric использует vanilla версию для jar файла
-            return mcVersion;
+            // Используем сохраненный fabricVersionId если есть
+            String fabricId = instance.getFabricVersionId();
+            if (fabricId != null && !fabricId.isEmpty()) {
+                return fabricId;
+            }
+            // fallback
+            return "fabric-loader-" + loaderVer + "-" + mcVersion;
         } 
         else if ("forge".equals(loaderType)) {
-            // Forge создаёт свою версию в папке versions
             return mcVersion + "-forge-" + loaderVer;
         }
 

@@ -3,6 +3,7 @@ package me.sashegdev.zernmc.launcher.minecraft.installer;
 import me.sashegdev.zernmc.launcher.minecraft.Instance;
 import me.sashegdev.zernmc.launcher.utils.ProgressBar;
 import me.sashegdev.zernmc.launcher.utils.ZAnsi;
+import me.sashegdev.zernmc.launcher.utils.ZHttpClient;
 
 import java.io.IOException;
 import java.net.URI;
@@ -30,17 +31,14 @@ public class FabricInstaller {
         Path instancePath = instance.getPath();
         cleanOldFabricLoaders();
 
-        // Шаг 1: Устанавливаем vanilla и получаем правильный assetIndex
         VersionInstaller versionInstaller = new VersionInstaller(instancePath);
-        String assetIndex = versionInstaller.install(minecraftVersion); // Теперь возвращает "5" вместо "1.20.1"
+        String assetIndex = versionInstaller.install(minecraftVersion);
         
         System.out.println(ZAnsi.green("Asset index получен: " + assetIndex));
         
-        // Сохраняем правильный assetIndex
         instance.setAssetIndex(assetIndex);
         instance.setMinecraftVersion(minecraftVersion);
 
-        // Шаг 2: Скачивание Fabric Installer
         String installerVersion = getLatestInstallerVersion();
         String installerUrl = "https://maven.fabricmc.net/net/fabricmc/fabric-installer/"
                 + installerVersion + "/fabric-installer-" + installerVersion + ".jar";
@@ -49,17 +47,14 @@ public class FabricInstaller {
 
         if (!Files.exists(installerJar)) {
             ProgressBar.show("Скачивание Fabric Installer", 0, 100, "%");
-            downloadFile(installerUrl, installerJar);
+            downloadFileWithFallback(installerUrl, installerJar);
             ProgressBar.finish("Fabric Installer скачан");
-        } else {
-            System.out.println(ZAnsi.green("Fabric Installer уже скачан, пропускаем..."));
         }
 
         System.out.println(ZAnsi.cyan("Запуск Fabric Installer..."));
-        
-        // Fabric создаёт версию: fabric-loader-{loaderVersion}-{minecraftVersion}
+
         String fabricVersionId = "fabric-loader-" + loaderVersion + "-" + minecraftVersion;
-        
+
         ProcessBuilder pb = new ProcessBuilder(
                 "java", "-jar", installerJar.toAbsolutePath().toString(),
                 "client",
@@ -68,7 +63,7 @@ public class FabricInstaller {
                 "-loader", loaderVersion,
                 "-noprofile"
         );
-        
+
         pb.redirectOutput(ProcessBuilder.Redirect.INHERIT);
         pb.redirectError(ProcessBuilder.Redirect.INHERIT);
 
@@ -80,36 +75,30 @@ public class FabricInstaller {
             return false;
         }
 
-        // Проверяем, создалась ли папка с Fabric версией
         Path fabricVersionDir = instancePath.resolve("versions").resolve(fabricVersionId);
 
         if (Files.exists(fabricVersionDir)) {
             System.out.println(ZAnsi.brightGreen("Fabric успешно установлен!"));
-            System.out.println(ZAnsi.white("Версия: ") + fabricVersionId);
-            System.out.println(ZAnsi.white("Asset index: ") + assetIndex);
 
-            // Сохраняем метаданные
             instance.setLoaderType("fabric");
             instance.setLoaderVersion(loaderVersion);
-            instance.setFabricVersionId(fabricVersionId); // <-- ВАЖНО: сохраняем ID Fabric версии
-            
-            // Исправляем asset index в JSON файле Fabric версии
+            instance.setFabricVersionId(fabricVersionId); // ← СОХРАНЯЕМ
+
             ensureAssetIndexInFabricVersion(fabricVersionDir, assetIndex);
 
             return true;
         } else {
             System.out.println(ZAnsi.brightRed("Fabric Installer отработал, но версия не найдена."));
-            System.out.println(ZAnsi.yellow("Искали: " + fabricVersionDir));
-            
-            // Отладка
-            Path versionsDir = instancePath.resolve("versions");
-            if (Files.exists(versionsDir)) {
-                System.out.println(ZAnsi.cyan("Доступные версии:"));
-                try (var stream = Files.list(versionsDir)) {
-                    stream.forEach(p -> System.out.println("  - " + p.getFileName()));
-                }
-            }
             return false;
+        }
+    }
+
+    private void downloadFileWithFallback(String url, Path target) throws Exception {
+        try {
+            ZHttpClient.downloadFile(url, target);
+        } catch (Exception e) {
+            System.out.println(ZAnsi.yellow("Не удалось скачать Fabric Installer: " + e.getMessage()));
+            throw e;
         }
     }
 
@@ -165,25 +154,19 @@ public class FabricInstaller {
     }
 
     private String getLatestInstallerVersion() throws Exception {
-        String[] urls = {
-            "https://maven.fabricmc.net/net/fabricmc/fabric-installer/maven-metadata.xml",
-            "http://maven.fabricmc.net/net/fabricmc/fabric-installer/maven-metadata.xml"
-        };
-
-        for (String url : urls) {
-            try {
-                String xml = downloadString(url);
-                int start = xml.indexOf("<latest>") + 8;
-                int end = xml.indexOf("</latest>", start);
-                return xml.substring(start, end).trim();
-            } catch (Exception e) {
-                System.out.println(ZAnsi.yellow("Не удалось получить версию из " + url + ": " + e.getMessage()));
-            }
+        try {
+            // Используем ZHttpClient с умным прокси
+            String xml = ZHttpClient.downloadString("https://maven.fabricmc.net/net/fabricmc/fabric-installer/maven-metadata.xml");
+            int start = xml.indexOf("<latest>") + 8;
+            int end = xml.indexOf("</latest>", start);
+            return xml.substring(start, end).trim();
+        } catch (Exception e) {
+            System.out.println(ZAnsi.yellow("Ошибка получения версии Fabric Installer: " + e.getMessage()));
+            throw new Exception("Не удалось получить версию Fabric Installer", e);
         }
-
-        throw new Exception("Не удалось получить версию Fabric Installer");
     }
 
+    // под рефактор оставить
     private String downloadString(String url) throws Exception {
         Exception lastException = null;
 

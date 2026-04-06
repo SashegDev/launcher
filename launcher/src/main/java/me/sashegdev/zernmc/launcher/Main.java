@@ -24,6 +24,9 @@ public class Main {
         System.out.print("\033[H\033[2J");
         System.out.println(ZAnsi.brightGreen("Добро пожаловать в ZernMC Launcher " + CURRENT_VERSION));
 
+        //проверка всех сервисов при старте
+        ZHttpClient.checkAllServicesOnStartup();
+
         checkAndAutoUpdateLauncher();
 
         try {

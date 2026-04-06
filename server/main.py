@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -15,6 +15,10 @@ from models import PackMeta
 from middleware import LoggingMiddleware
 from cli import parse_args, run_test_mode, run_production_mode, run_development_mode
 from log_manager import init_logging
+
+import httpx
+import base64
+from fastapi.responses import StreamingResponse
 
 logger = structlog.get_logger(__name__)
 
@@ -476,6 +480,350 @@ async def get_launcher_full_info():
         info["files"]["download_latest"] = "/launcher/download/latest"
     
     return info
+
+
+# ====================== ПРОКСИ ЭНДПОИНТЫ ======================
+# Эти эндпоинты позволяют клиентам с сетевыми проблемами
+# скачивать файлы через сервер Zern
+
+# Создаем HTTP клиент для прокси
+proxy_client = httpx.AsyncClient(timeout=60.0, follow_redirects=True)
+
+# Кэш для часто запрашиваемых данных (5 минут)
+from cachetools import TTLCache
+proxy_cache = TTLCache(maxsize=50, ttl=300)
+
+# Список заблокированных/проблемных хостов (можно обновлять)
+BLOCKED_HOSTS = []
+
+
+@app.get("/proxy/fabric/versions/loader")
+async def proxy_fabric_versions(request: Request):
+    """Прокси для Fabric Meta API - список версий загрузчика"""
+    client_ip = request.client.host if request.client else "unknown"
+    logger.info(f"Proxy request: Fabric versions from {client_ip}")
+    
+    url = "https://meta.fabricmc.net/v2/versions/loader"
+    
+    # Проверяем кэш
+    if url in proxy_cache:
+        logger.debug(f"Proxy cache hit for {url}")
+        return JSONResponse(content=proxy_cache[url])
+    
+    try:
+        response = await proxy_client.get(url)
+        response.raise_for_status()
+        data = response.json()
+        
+        # Кэшируем
+        proxy_cache[url] = data
+        
+        logger.info(f"Proxy success: Fabric versions ({len(data)} items)")
+        return JSONResponse(content=data)
+        
+    except httpx.HTTPError as e:
+        logger.error(f"Proxy error for Fabric versions: {e}")
+        raise HTTPException(502, f"Bad Gateway: {str(e)}")
+    except Exception as e:
+        logger.error(f"Proxy unexpected error: {e}")
+        raise HTTPException(500, f"Internal error: {str(e)}")
+
+
+@app.get("/proxy/fabric/installer/latest")
+async def proxy_fabric_installer_latest(request: Request):
+    """Получить последнюю версию Fabric Installer"""
+    client_ip = request.client.host if request.client else "unknown"
+    logger.info(f"Proxy request: Fabric installer latest from {client_ip}")
+    
+    url = "https://maven.fabricmc.net/net/fabricmc/fabric-installer/maven-metadata.xml"
+    
+    try:
+        response = await proxy_client.get(url)
+        response.raise_for_status()
+        xml = response.text
+        
+        # Парсим последнюю версию из XML
+        import re
+        match = re.search(r'<latest>([^<]+)</latest>', xml)
+        if match:
+            version = match.group(1)
+            logger.info(f"Proxy success: Latest Fabric installer version = {version}")
+            return JSONResponse(content={"version": version})
+        else:
+            raise HTTPException(500, "Could not parse latest version")
+            
+    except httpx.HTTPError as e:
+        logger.error(f"Proxy error for Fabric installer latest: {e}")
+        raise HTTPException(502, f"Bad Gateway: {str(e)}")
+
+
+@app.get("/proxy/fabric/installer/{version}")
+async def proxy_fabric_installer_url(version: str, request: Request):
+    """Получить URL для скачивания Fabric Installer определенной версии"""
+    client_ip = request.client.host if request.client else "unknown"
+    logger.info(f"Proxy request: Fabric installer URL for v{version} from {client_ip}")
+    
+    url = f"https://maven.fabricmc.net/net/fabricmc/fabric-installer/{version}/fabric-installer-{version}.jar"
+    
+    return JSONResponse(content={"url": url, "version": version})
+
+
+@app.get("/proxy/fabric/maven/{path:path}")
+async def proxy_fabric_maven(path: str, request: Request):
+    """Прокси для Fabric Maven файлов"""
+    client_ip = request.client.host if request.client else "unknown"
+    logger.info(f"Proxy request: Fabric Maven {path} from {client_ip}")
+    
+    full_url = f"https://maven.fabricmc.net/{path}"
+    
+    try:
+        response = await proxy_client.get(full_url)
+        response.raise_for_status()
+        
+        # Определяем content-type
+        content_type = "application/octet-stream"
+        if path.endswith(".jar"):
+            content_type = "application/java-archive"
+        elif path.endswith(".pom"):
+            content_type = "application/xml"
+        
+        return Response(
+            content=response.content,
+            media_type=content_type,
+            headers={"X-Proxied-By": "ZernMC"}
+        )
+        
+    except httpx.HTTPError as e:
+        logger.error(f"Proxy error for Fabric Maven {path}: {e}")
+        raise HTTPException(502, f"Bad Gateway: {str(e)}")
+
+
+@app.get("/proxy/mojang/version_manifest")
+async def proxy_mojang_manifest(request: Request):
+    """Прокси для Mojang version manifest"""
+    client_ip = request.client.host if request.client else "unknown"
+    logger.info(f"Proxy request: Mojang manifest from {client_ip}")
+    
+    url = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
+    
+    if url in proxy_cache:
+        return JSONResponse(content=proxy_cache[url])
+    
+    try:
+        response = await proxy_client.get(url)
+        response.raise_for_status()
+        data = response.json()
+        
+        proxy_cache[url] = data
+        logger.info("Proxy success: Mojang manifest")
+        return JSONResponse(content=data)
+        
+    except httpx.HTTPError as e:
+        logger.error(f"Proxy error for Mojang manifest: {e}")
+        raise HTTPException(502, f"Bad Gateway: {str(e)}")
+
+
+@app.get("/proxy/mojang/version/{version_id}")
+async def proxy_mojang_version(version_id: str, request: Request):
+    """Прокси для конкретной версии Mojang"""
+    client_ip = request.client.host if request.client else "unknown"
+    logger.info(f"Proxy request: Mojang version {version_id} from {client_ip}")
+    
+    # Сначала получаем манифест, чтобы найти URL версии
+    manifest_url = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
+    
+    cache_key = f"version_url_{version_id}"
+    version_url = proxy_cache.get(cache_key)
+    
+    if not version_url:
+        try:
+            response = await proxy_client.get(manifest_url)
+            response.raise_for_status()
+            manifest = response.json()
+            
+            for version in manifest.get("versions", []):
+                if version.get("id") == version_id:
+                    version_url = version.get("url")
+                    proxy_cache[cache_key] = version_url
+                    break
+                    
+            if not version_url:
+                raise HTTPException(404, f"Version {version_id} not found")
+                
+        except httpx.HTTPError as e:
+            logger.error(f"Proxy error getting version URL: {e}")
+            raise HTTPException(502, f"Bad Gateway: {str(e)}")
+    
+    try:
+        response = await proxy_client.get(version_url)
+        response.raise_for_status()
+        data = response.json()
+        
+        logger.info(f"Proxy success: Mojang version {version_id}")
+        return JSONResponse(content=data)
+        
+    except httpx.HTTPError as e:
+        logger.error(f"Proxy error for Mojang version {version_id}: {e}")
+        raise HTTPException(502, f"Bad Gateway: {str(e)}")
+
+
+@app.get("/proxy/forge/versions")
+async def proxy_forge_versions(request: Request):
+    """Прокси для списка версий Forge"""
+    client_ip = request.client.host if request.client else "unknown"
+    logger.info(f"Proxy request: Forge versions from {client_ip}")
+    
+    url = "https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml"
+    
+    try:
+        response = await proxy_client.get(url)
+        response.raise_for_status()
+        
+        # Возвращаем XML как есть
+        return Response(
+            content=response.content,
+            media_type="application/xml",
+            headers={"X-Proxied-By": "ZernMC"}
+        )
+        
+    except httpx.HTTPError as e:
+        logger.error(f"Proxy error for Forge versions: {e}")
+        raise HTTPException(502, f"Bad Gateway: {str(e)}")
+
+
+@app.get("/proxy/forge/maven/{path:path}")
+async def proxy_forge_maven(path: str, request: Request):
+    """Прокси для Forge Maven файлов"""
+    client_ip = request.client.host if request.client else "unknown"
+    logger.info(f"Proxy request: Forge Maven {path} from {client_ip}")
+    
+    full_url = f"https://maven.minecraftforge.net/{path}"
+    
+    try:
+        response = await proxy_client.get(full_url)
+        response.raise_for_status()
+        
+        content_type = "application/octet-stream"
+        if path.endswith(".jar"):
+            content_type = "application/java-archive"
+        elif path.endswith(".pom"):
+            content_type = "application/xml"
+        
+        return Response(
+            content=response.content,
+            media_type=content_type,
+            headers={"X-Proxied-By": "ZernMC"}
+        )
+        
+    except httpx.HTTPError as e:
+        logger.error(f"Proxy error for Forge Maven {path}: {e}")
+        raise HTTPException(502, f"Bad Gateway: {str(e)}")
+
+
+@app.get("/proxy/download")
+async def proxy_download(request: Request):
+    """Универсальный прокси для скачивания файлов"""
+    client_ip = request.client.host if request.client else "unknown"
+    url = request.query_params.get("url")
+    
+    if not url:
+        raise HTTPException(400, "Missing 'url' parameter")
+    
+    # Безопасность: проверяем URL
+    allowed_domains = [
+        "maven.fabricmc.net",
+        "meta.fabricmc.net",
+        "piston-meta.mojang.com",
+        "launchermeta.mojang.com",
+        "resources.download.minecraft.net",
+        "maven.minecraftforge.net",
+        "files.minecraftforge.net"
+    ]
+    
+    # Проверяем, что URL ведет на разрешенный домен
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    domain = parsed.netloc.lower()
+    
+    # Убираем порт если есть
+    domain = domain.split(':')[0]
+    
+    if domain not in allowed_domains and not any(domain.endswith(f".{d}") for d in allowed_domains):
+        logger.warning(f"Proxy blocked: {domain} not in allowed list (client: {client_ip}, url: {url[:100]})")
+        raise HTTPException(403, f"Domain {domain} not allowed")
+    
+    logger.info(f"Proxy download: {url[:100]}... from {client_ip}")
+    
+    try:
+        # Используем streaming response для больших файлов
+        response = await proxy_client.get(url)
+        response.raise_for_status()
+        
+        # Определяем content-type из ответа или по расширению
+        content_type = response.headers.get("content-type", "application/octet-stream")
+        
+        return Response(
+            content=response.content,
+            media_type=content_type,
+            headers={
+                "X-Proxied-By": "ZernMC",
+                "X-Original-Url": url[:100]  # только для отладки
+            }
+        )
+        
+    except httpx.HTTPError as e:
+        logger.error(f"Proxy download error for {url[:100]}: {e}")
+        raise HTTPException(502, f"Bad Gateway: {str(e)}")
+
+
+@app.get("/proxy/asset/{hash}")
+async def proxy_asset(hash: str, request: Request):
+    """Прокси для Minecraft ассетов по хешу"""
+    client_ip = request.client.host if request.client else "unknown"
+    
+    if len(hash) < 2:
+        raise HTTPException(400, "Invalid hash")
+    
+    url = f"https://resources.download.minecraft.net/{hash[:2]}/{hash}"
+    logger.info(f"Proxy asset: {hash} from {client_ip}")
+    
+    try:
+        response = await proxy_client.get(url)
+        response.raise_for_status()
+        
+        return Response(
+            content=response.content,
+            media_type="application/octet-stream",
+            headers={"X-Proxied-By": "ZernMC"}
+        )
+        
+    except httpx.HTTPError as e:
+        logger.error(f"Proxy asset error for {hash}: {e}")
+        raise HTTPException(502, f"Bad Gateway: {str(e)}")
+
+
+@app.get("/proxy/status")
+async def proxy_status():
+    """Проверка статуса прокси сервера"""
+    return {
+        "status": "ok",
+        "cached_items": len(proxy_cache),
+        "allowed_domains": [
+            "maven.fabricmc.net",
+            "meta.fabricmc.net", 
+            "piston-meta.mojang.com",
+            "launchermeta.mojang.com",
+            "resources.download.minecraft.net",
+            "maven.minecraftforge.net"
+        ],
+        "note": "Use this proxy if you have network issues connecting to Fabric/Mojang/Forge"
+    }
+
+
+# Cleanup on shutdown
+@app.on_event("shutdown")
+async def shutdown_proxy():
+    await proxy_client.close()
 
 
 # ====================== ЗАПУСК ======================
