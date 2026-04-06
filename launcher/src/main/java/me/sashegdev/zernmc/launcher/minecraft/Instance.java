@@ -20,6 +20,7 @@ public class Instance {
     private boolean isServerPack;      // флаг, что это сборка с сервера
     private int serverVersion;          // версия сборки на сервере
     private String serverPackName;      // имя пака на сервере
+    private String fabricVersionId;
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
@@ -58,6 +59,14 @@ public class Instance {
     public void setAssetIndex(String assetIndex) {
         this.assetIndex = assetIndex;
         saveMetadata();
+    }
+
+    public String getFabricVersionId() {
+        return fabricVersionId;
+    }
+
+    public void setFabricVersionId(String fabricVersionId) {
+        this.fabricVersionId = fabricVersionId;
     }
 
 

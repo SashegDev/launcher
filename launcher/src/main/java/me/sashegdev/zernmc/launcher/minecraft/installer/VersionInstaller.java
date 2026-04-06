@@ -79,10 +79,9 @@ public class VersionInstaller {
 
         String assetIndex;
         if (versionData.has("assetIndex")) {
-            JSONObject assetIndexObj = versionData.getJSONObject("assetIndex");
-            assetIndex = assetIndexObj.getString("id");  // ← это "5" для 1.20.1
+            assetIndex = versionData.getJSONObject("assetIndex").getString("id");
         } else {
-            assetIndex = versionData.getString("assets"); // fallback
+            assetIndex = versionData.getString("assets");
         }
 
         System.out.println(ZAnsi.cyan("Asset index: " + assetIndex));
@@ -193,14 +192,17 @@ public class VersionInstaller {
         }
     }
 
-    public String getAssetIndexForVersion(String versionId) throws Exception {
+    public String getAssetIndexId(String versionId) throws Exception {
         String versionUrl = getVersionUrl(versionId);
-        if (versionUrl == null) throw new Exception("Версия " + versionId + " не найдена");
-        
+        if (versionUrl == null) throw new Exception("Версия не найдена");
+
         String versionJson = downloadString(versionUrl);
         JSONObject versionData = new JSONObject(versionJson);
-        
-        return versionData.getString("assets");
+
+        if (versionData.has("assetIndex") && versionData.getJSONObject("assetIndex").has("id")) {
+            return versionData.getJSONObject("assetIndex").getString("id");  // "5" для 1.20.1
+        }
+        return versionData.getString("assets"); // fallback (очень старые версии)
     }
 
     private String getVersionUrl(String versionId) throws Exception {

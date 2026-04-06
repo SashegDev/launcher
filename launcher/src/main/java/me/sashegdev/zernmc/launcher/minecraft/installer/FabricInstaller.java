@@ -30,30 +30,15 @@ public class FabricInstaller {
         Path instancePath = instance.getPath();
         cleanOldFabricLoaders();
 
-        // Шаг 1: Устанавливаем vanilla и получаем assetIndex
+        // Шаг 1: Устанавливаем vanilla и получаем правильный assetIndex
         VersionInstaller versionInstaller = new VersionInstaller(instancePath);
-        String assetIndex = versionInstaller.install(minecraftVersion);
+        String assetIndex = versionInstaller.install(minecraftVersion); // Теперь возвращает "5" вместо "1.20.1"
         
-        // ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: если versionInstaller.install() вернул неправильный индекс
-        // (например, "1.20.1" вместо "5"), то получаем правильный индекс напрямую
-        if (assetIndex == null || assetIndex.isEmpty() || assetIndex.equals(minecraftVersion)) {
-            System.out.println(ZAnsi.yellow("Asset index из установки выглядит подозрительно: " + assetIndex));
-            System.out.println(ZAnsi.cyan("Получаем правильный asset index для " + minecraftVersion + "..."));
-            
-            // Получаем правильный asset index из манифеста версии
-            String correctAssetIndex = versionInstaller.getAssetIndexForVersion(minecraftVersion);
-            if (correctAssetIndex != null && !correctAssetIndex.isEmpty()) {
-                assetIndex = correctAssetIndex;
-                System.out.println(ZAnsi.green("Правильный asset index: " + assetIndex));
-            } else {
-                System.out.println(ZAnsi.brightRed("Не удалось получить asset index для версии " + minecraftVersion));
-                return false;
-            }
-        }
-
+        System.out.println(ZAnsi.green("Asset index получен: " + assetIndex));
+        
         // Сохраняем правильный assetIndex
         instance.setAssetIndex(assetIndex);
-        System.out.println(ZAnsi.green("Asset index сохранён: " + assetIndex));
+        instance.setMinecraftVersion(minecraftVersion);
 
         // Шаг 2: Скачивание Fabric Installer
         String installerVersion = getLatestInstallerVersion();
@@ -72,7 +57,9 @@ public class FabricInstaller {
 
         System.out.println(ZAnsi.cyan("Запуск Fabric Installer..."));
         
-        // Используем ProcessBuilder с правильными аргументами
+        // Fabric создаёт версию: fabric-loader-{loaderVersion}-{minecraftVersion}
+        String fabricVersionId = "fabric-loader-" + loaderVersion + "-" + minecraftVersion;
+        
         ProcessBuilder pb = new ProcessBuilder(
                 "java", "-jar", installerJar.toAbsolutePath().toString(),
                 "client",
@@ -93,40 +80,31 @@ public class FabricInstaller {
             return false;
         }
 
-        // Проверка результата - Fabric создаёт папку versions/fabric-loader-{loaderVersion}-{minecraftVersion}
-        String fabricVersionId = "fabric-loader-" + loaderVersion + "-" + minecraftVersion;
+        // Проверяем, создалась ли папка с Fabric версией
         Path fabricVersionDir = instancePath.resolve("versions").resolve(fabricVersionId);
-        
-        // Альтернативная проверка (иногда Fabric использует другой формат)
-        if (!Files.exists(fabricVersionDir)) {
-            fabricVersionId = "fabric-loader-" + loaderVersion + "-" + minecraftVersion;
-            fabricVersionDir = instancePath.resolve("versions").resolve(fabricVersionId);
-        }
 
         if (Files.exists(fabricVersionDir)) {
             System.out.println(ZAnsi.brightGreen("Fabric успешно установлен!"));
             System.out.println(ZAnsi.white("Версия: ") + fabricVersionId);
             System.out.println(ZAnsi.white("Asset index: ") + assetIndex);
 
-            // Сохраняем метаданные в Instance
-            instance.setMinecraftVersion(minecraftVersion);
+            // Сохраняем метаданные
             instance.setLoaderType("fabric");
             instance.setLoaderVersion(loaderVersion);
-            // assetIndex уже сохранён выше, но сохраняем ещё раз для надёжности
-            instance.setAssetIndex(assetIndex);
+            instance.setFabricVersionId(fabricVersionId); // <-- ВАЖНО: сохраняем ID Fabric версии
             
-            // Копируем или создаём ссылку на правильный asset index в версии Fabric
-            ensureAssetIndexInFabricVersion(fabricVersionDir, assetIndex, minecraftVersion);
+            // Исправляем asset index в JSON файле Fabric версии
+            ensureAssetIndexInFabricVersion(fabricVersionDir, assetIndex);
 
             return true;
         } else {
             System.out.println(ZAnsi.brightRed("Fabric Installer отработал, но версия не найдена."));
             System.out.println(ZAnsi.yellow("Искали: " + fabricVersionDir));
             
-            // Выводим содержимое папки versions для отладки
+            // Отладка
             Path versionsDir = instancePath.resolve("versions");
             if (Files.exists(versionsDir)) {
-                System.out.println(ZAnsi.cyan("Доступные версии в папке versions:"));
+                System.out.println(ZAnsi.cyan("Доступные версии:"));
                 try (var stream = Files.list(versionsDir)) {
                     stream.forEach(p -> System.out.println("  - " + p.getFileName()));
                 }
@@ -135,10 +113,7 @@ public class FabricInstaller {
         }
     }
 
-    /**
-     * Убеждаемся, что в JSON файле версии Fabric есть правильный asset index
-     */
-    private void ensureAssetIndexInFabricVersion(Path fabricVersionDir, String assetIndex, String minecraftVersion) throws IOException {
+    private void ensureAssetIndexInFabricVersion(Path fabricVersionDir, String assetIndex) throws IOException {
         Path versionJson = fabricVersionDir.resolve(fabricVersionDir.getFileName() + ".json");
         
         if (!Files.exists(versionJson)) {
@@ -148,15 +123,14 @@ public class FabricInstaller {
         
         String content = Files.readString(versionJson);
         
-        // Проверяем, есть ли в JSON правильный asset index
+        // Проверяем и исправляем asset index
         if (!content.contains("\"assets\":\"" + assetIndex + "\"")) {
             System.out.println(ZAnsi.yellow("Исправляем asset index в JSON файле версии..."));
             
             // Заменяем assets на правильное значение
-            // Ищем "assets": "что-то" и заменяем
             content = content.replaceAll("\"assets\":\\s*\"[^\"]*\"", "\"assets\": \"" + assetIndex + "\"");
             
-            // Также проверяем assetIndex в downloads
+            // Также проверяем assetIndex
             if (content.contains("\"assetIndex\"")) {
                 content = content.replaceAll("\"assetIndex\":\\s*\"[^\"]*\"", "\"assetIndex\": \"" + assetIndex + "\"");
             }
@@ -164,7 +138,7 @@ public class FabricInstaller {
             Files.writeString(versionJson, content);
             System.out.println(ZAnsi.green("Asset index исправлен на: " + assetIndex));
         } else {
-            System.out.println(ZAnsi.green("Asset index в JSON версии уже правильный: " + assetIndex));
+            System.out.println(ZAnsi.green("Asset index в JSON версии правильный: " + assetIndex));
         }
     }
 
@@ -191,7 +165,6 @@ public class FabricInstaller {
     }
 
     private String getLatestInstallerVersion() throws Exception {
-        // Пробуем HTTPS сначала
         String[] urls = {
             "https://maven.fabricmc.net/net/fabricmc/fabric-installer/maven-metadata.xml",
             "http://maven.fabricmc.net/net/fabricmc/fabric-installer/maven-metadata.xml"
@@ -205,26 +178,24 @@ public class FabricInstaller {
                 return xml.substring(start, end).trim();
             } catch (Exception e) {
                 System.out.println(ZAnsi.yellow("Не удалось получить версию из " + url + ": " + e.getMessage()));
-                // продолжаем со следующим URL
             }
         }
 
-        throw new Exception("Не удалось получить версию Fabric Installer ни с одного источника");
+        throw new Exception("Не удалось получить версию Fabric Installer");
     }
 
     private String downloadString(String url) throws Exception {
-        // Увеличиваем таймауты и добавляем ретраи
         Exception lastException = null;
-        
+
         for (int attempt = 1; attempt <= 3; attempt++) {
             try {
                 HttpRequest request = HttpRequest.newBuilder()
                         .uri(URI.create(url))
-                        .timeout(Duration.ofSeconds(30 * attempt)) // увеличиваем таймаут с каждой попыткой
+                        .timeout(Duration.ofSeconds(30 * attempt))
                         .header("User-Agent", "ZernMC-Launcher/1.0")
                         .GET()
                         .build();
-                
+
                 HttpResponse<String> resp = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
                 if (resp.statusCode() == 200) {
                     return resp.body();
@@ -238,7 +209,7 @@ public class FabricInstaller {
                 }
             }
         }
-        
+
         throw lastException;
     }
 
