@@ -56,7 +56,7 @@ public class VersionInstaller {
         return versions;
     }
 
-    public String install(String versionId) throws Exception {   // ← поменял boolean на String
+    public String install(String versionId) throws Exception {
         System.out.println(ZAnsi.cyan("Полная установка Minecraft " + versionId + "..."));
         Path versionDir = minecraftDir.resolve("versions").resolve(versionId);
         Files.createDirectories(versionDir);
@@ -77,17 +77,20 @@ public class VersionInstaller {
         System.out.println(ZAnsi.cyan("Скачивание библиотек..."));
         downloadLibraries(versionData.getJSONArray("libraries"));
 
-        // Ассеты
-        String assetIndex = versionData.getString("assets");   // ← ВОТ ЭТО ГЛАВНОЕ!
+        // Ассеты - ЭТО ВАЖНО
+        String assetIndex = versionData.getString("assets");  // ← Например "5" для 1.20.1
+        System.out.println(ZAnsi.cyan("Asset index из версии: " + assetIndex));
 
         if (versionData.has("assetIndex")) {
             System.out.println(ZAnsi.cyan("Скачивание ассетов..."));
             downloadAssets(versionData);
             System.out.println(ZAnsi.brightGreen("Asset index определён как: " + assetIndex));
+        } else {
+            System.out.println(ZAnsi.yellow("Нет assetIndex в версии, использую fallback: " + assetIndex));
         }
 
         System.out.println(ZAnsi.brightGreen("\nMinecraft " + versionId + " полностью установлен!"));
-        return assetIndex;   // ← возвращаем настоящий assetIndex (например "30")
+        return assetIndex;  // ← Возвращаем правильный индекс (например "5")
     }
 
     private void downloadLibraries(JSONArray libraries) throws Exception {
@@ -186,6 +189,16 @@ public class VersionInstaller {
             System.out.println(ZAnsi.yellow("Предупреждение: " + failed[0] + " файлов ассетов не удалось скачать."));
             System.out.println(ZAnsi.yellow("Игра запустится, но некоторые текстуры/звуки могут отсутствовать."));
         }
+    }
+
+    public String getAssetIndexForVersion(String versionId) throws Exception {
+        String versionUrl = getVersionUrl(versionId);
+        if (versionUrl == null) throw new Exception("Версия " + versionId + " не найдена");
+        
+        String versionJson = downloadString(versionUrl);
+        JSONObject versionData = new JSONObject(versionJson);
+        
+        return versionData.getString("assets");
     }
 
     private String getVersionUrl(String versionId) throws Exception {

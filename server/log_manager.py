@@ -102,8 +102,9 @@ def setup_logging():
                     structlog.processors.CallsiteParameter.MODULE,
                     structlog.processors.CallsiteParameter.FUNC_NAME,
                 }
-            ),
+            ), 
             _add_location,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,

@@ -8,7 +8,7 @@ import java.nio.file.Path;
 
 
 
-// ЭТОТ КЛАСС РАБОТАЕТ НЕ ТРОГАТЬ ТОТ КТО БУДЕТ ЧИТАТЬ
+// ЭТОТ КЛАСС РАБОТАЕТ НЕ ТРОГАТЬ ТОТ КТО БУДЕТ ЧИТАТЬ (на момент 1.0.2)
 public class Instance {
     private final String name;
     private final Path path;
@@ -17,6 +17,9 @@ public class Instance {
     private String loaderType;      // vanilla, fabric, forge
     private String loaderVersion;
     private String assetIndex;
+    private boolean isServerPack;      // флаг, что это сборка с сервера
+    private int serverVersion;          // версия сборки на сервере
+    private String serverPackName;      // имя пака на сервере
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
@@ -57,6 +60,34 @@ public class Instance {
         saveMetadata();
     }
 
+
+    public boolean isServerPack() { 
+        return isServerPack; 
+    }
+    
+    public void setServerPack(boolean serverPack) {
+        this.isServerPack = serverPack;
+        saveMetadata();
+    }
+
+    public int getServerVersion() { 
+        return serverVersion; 
+    }
+    
+    public void setServerVersion(int serverVersion) {
+        this.serverVersion = serverVersion;
+        saveMetadata();
+    }
+
+    public String getServerPackName() { 
+        return serverPackName; 
+    }
+    
+    public void setServerPackName(String serverPackName) {
+        this.serverPackName = serverPackName;
+        saveMetadata();
+    }
+
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder(name);
@@ -67,6 +98,9 @@ public class Instance {
                 if (loaderVersion != null) sb.append(" ").append(loaderVersion);
             }
             sb.append("]");
+            if (isServerPack) {
+                sb.append("v").append(serverVersion);
+            }
         } else {
             sb.append(" [?]");
         }
@@ -84,12 +118,18 @@ public class Instance {
             this.loaderType = meta.loaderType;
             this.loaderVersion = meta.loaderVersion;
             this.assetIndex = meta.assetIndex;
+            this.isServerPack = meta.isServerPack;
+            this.serverVersion = meta.serverVersion;
+            this.serverPackName = meta.serverPackName;
         } catch (Exception ignored) {}
     }
 
     private void saveMetadata() {
         Path metaFile = path.resolve("instance.json");
-        InstanceMeta meta = new InstanceMeta(minecraftVersion, loaderType, loaderVersion, assetIndex);
+        InstanceMeta meta = new InstanceMeta(
+            minecraftVersion, loaderType, loaderVersion, assetIndex,
+            isServerPack, serverVersion, serverPackName
+        );
         try {
             Files.writeString(metaFile, GSON.toJson(meta));
         } catch (IOException e) {
@@ -102,13 +142,22 @@ public class Instance {
         String loaderType;
         String loaderVersion;
         String assetIndex;
+        boolean isServerPack = false;
+        int serverVersion = 0;
+        String serverPackName;
 
+        
         public InstanceMeta(String minecraftVersion, String loaderType,
-                            String loaderVersion, String assetIndex) {
+                            String loaderVersion, String assetIndex,
+                            boolean isServerPack, int serverVersion, 
+                            String serverPackName) {
             this.minecraftVersion = minecraftVersion;
             this.loaderType = loaderType;
             this.loaderVersion = loaderVersion;
             this.assetIndex = assetIndex;
+            this.isServerPack = isServerPack;
+            this.serverVersion = serverVersion;
+            this.serverPackName = serverPackName;
         }
     }
 }

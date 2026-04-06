@@ -3,6 +3,8 @@ package me.sashegdev.zernmc.launcher.menu;
 import me.sashegdev.zernmc.launcher.minecraft.Instance;
 import me.sashegdev.zernmc.launcher.minecraft.InstanceManager;
 import me.sashegdev.zernmc.launcher.minecraft.MinecraftLib;
+import me.sashegdev.zernmc.launcher.minecraft.PackDownloader;
+import me.sashegdev.zernmc.launcher.minecraft.ServerPack;
 import me.sashegdev.zernmc.launcher.minecraft.installer.VersionInstaller;
 import me.sashegdev.zernmc.launcher.minecraft.model.LaunchOptions;
 import me.sashegdev.zernmc.launcher.minecraft.model.MinecraftVersion;
@@ -35,7 +37,7 @@ public class LaunchMenu {
             int choice = menu.show();
 
             if (choice == -1) break;
-            if (choice == options.size() - 1) break; // Назад
+            if (choice == options.size() - 1) break;
 
             if (choice == instances.size()) {
                 installNewPack();
@@ -47,72 +49,219 @@ public class LaunchMenu {
         }
     }
 
-    private void installNewPack() throws IOException {
+    private void installNewPack() throws Exception {
+        ConsoleUtils.clearScreen();
+        
+        List<String> options = List.of(
+            "Установить сборку с сервера ZernMC",
+            "Установить Vanilla Minecraft",
+            "Создать сборку вручную (Fabric/Forge)",
+            "Назад"
+        );
+        
+        ArrowMenu menu = new ArrowMenu("Установка новой сборки", options);
+        int choice = menu.show();
+        
+        if (choice == -1 || choice == 3) return;
+        
+        switch (choice) {
+            case 0 -> {
+                try {
+                    installServerPack();
+                } catch (Exception e) {
+                    System.out.println(ZAnsi.brightRed("Ошибка: " + e.getMessage()));
+                    e.printStackTrace();
+                    ConsoleUtils.pause();
+                }
+            }
+            case 1 -> createVanillaInstance();
+            case 2 -> createCustomInstance();
+        }
+    }
+
+    private void installServerPack() throws Exception {
+        ConsoleUtils.clearScreen();
+        System.out.println(ZAnsi.cyan("Получение списка доступных сборок с сервера..."));
+        
+        PackDownloader tempDownloader = new PackDownloader(null);
+        List<ServerPack> availablePacks = tempDownloader.getAvailablePacks();
+        
+        if (availablePacks.isEmpty()) {
+            System.out.println(ZAnsi.yellow("Нет доступных сборок на сервере."));
+            ConsoleUtils.pause();
+            return;
+        }
+        
+        // Исправлено: убраны спецсимволы для Windows
+        List<String> options = availablePacks.stream()
+            .map(p -> String.format("%s [%s + %s v%d] - %d файлов",
+                p.getName(), 
+                p.getMinecraftVersion(), 
+                p.getLoaderType(), 
+                p.getVersion(), 
+                p.getFilesCount()))
+            .collect(Collectors.toList());
+        options.add("Назад");
+        
+        ArrowMenu menu = new ArrowMenu("Выберите сборку для установки", options);
+        int choice = menu.show();
+        
+        if (choice == -1 || choice == options.size() - 1) return;
+        
+        ServerPack selected = availablePacks.get(choice);
+        
+        // Запрашиваем имя для локальной сборки
+        ConsoleUtils.clearScreen();
+        System.out.println(ZAnsi.header("Установка сборки: " + selected.getName()));
+        System.out.println(ZAnsi.white("  Minecraft: ") + selected.getMinecraftVersion());
+        System.out.println(ZAnsi.white("  Лоадер: ") + selected.getLoaderType() + " " + selected.getLoaderVersion());
+        System.out.println(ZAnsi.white("  Версия: v") + selected.getVersion());
+        System.out.println(ZAnsi.white("  Файлов: ") + selected.getFilesCount());
+        System.out.println();
+        
+        System.out.print(ZAnsi.white("Введите название локальной сборки (Enter = использовать имя пака): "));
+        String localName = Input.readLine();
+        if (localName.isEmpty()) {
+            localName = selected.getName();
+        }
+        
+        // Проверяем, существует ли уже такая сборка
+        if (InstanceManager.getInstance(localName) != null) {
+            System.out.println(ZAnsi.brightRed("Сборка с таким именем уже существует!"));
+            ConsoleUtils.pause();
+            return;
+        }
+        
+        // Создаем инстанс
+        InstanceManager.createInstanceFolder(localName);
+        Instance newInstance = InstanceManager.getInstance(localName);
+        
+        // Устанавливаем сборку
+        PackDownloader packDownloader = new PackDownloader(newInstance);
+        boolean success = packDownloader.installOrUpdatePack(selected.getName(), selected);
+        
+        if (success) {
+            System.out.println(ZAnsi.brightGreen("\n[OK] Сборка '" + localName + "' успешно установлена!"));
+        } else {
+            System.out.println(ZAnsi.brightRed("\n[FAIL] Не удалось установить сборку."));
+        }
+        
+        ConsoleUtils.pause();
+    }
+
+    private void createVanillaInstance() throws Exception {
         ConsoleUtils.clearScreen();
         System.out.println(ZAnsi.cyan("Получение списка версий Minecraft..."));
-
-        try {
-            VersionInstaller versionInstaller = new VersionInstaller(null);
-            List<MinecraftVersion> allVersions = versionInstaller.getAvailableVersions();
-
-            List<String> versionOptions = allVersions.stream()
-                    .map(v -> v.getId() + "  (" + v.getType() + ")")
-                    .collect(Collectors.toList());
-            versionOptions.add("Назад");
-
-            ArrowMenu versionMenu = new ArrowMenu("Выбор версии Minecraft", versionOptions);
-            int versionChoice = versionMenu.show();
-
-            if (versionChoice == -1 || versionChoice == versionOptions.size() - 1) return;
-
-            MinecraftVersion selectedMc = allVersions.get(versionChoice);
-            String mcVersion = selectedMc.getId();
-
-            // === Выбор лоадера с правильной проверкой поддержки ===
-            List<String> loaderOptions = buildLoaderOptions(mcVersion);
-            ArrowMenu loaderMenu = new ArrowMenu("Выбор модлоадера для " + mcVersion, loaderOptions);
-            int loaderChoice = loaderMenu.show();
-
-            if (loaderChoice == -1 || loaderChoice == loaderOptions.size() - 1) return;
-
-            String selectedLoader = loaderOptions.get(loaderChoice);
-
-            if (selectedLoader.contains("Vanilla")) {
-                createVanillaInstance(mcVersion);
-                return;
-            }
-
-            String loaderType = selectedLoader.contains("Fabric") ? "fabric" : "forge";
-
-            String loaderVersion;
-            if (loaderType.equals("fabric")) {
-                loaderVersion = askFabricLoaderVersion();
-            } else {
-                loaderVersion = askForgeVersion(mcVersion);
-            }
-
-            if (loaderVersion == null) return;
-
-            String packName = askPackName();
-            if (packName == null) return;
-
-            InstanceManager.createInstanceFolder(packName);
-            Instance newInstance = InstanceManager.getInstance(packName);
-
-            MinecraftLib lib = new MinecraftLib(newInstance);
-
-            boolean success = loaderType.equals("fabric")
-                    ? lib.installFabric(mcVersion, loaderVersion)
-                    : lib.installForge(mcVersion, loaderVersion);
-
-            if (success) {
-                System.out.println(ZAnsi.brightGreen("\nСборка '" + packName + "' успешно установлена!"));
-            }
-
-        } catch (Exception e) {
-            System.out.println(ZAnsi.brightRed("Ошибка: " + e.getMessage()));
+        
+        VersionInstaller versionInstaller = new VersionInstaller(null);
+        List<MinecraftVersion> allVersions = versionInstaller.getAvailableVersions();
+        
+        List<String> versionOptions = allVersions.stream()
+                .map(v -> v.getId() + "  (" + v.getType() + ")")
+                .collect(Collectors.toList());
+        versionOptions.add("Назад");
+        
+        ArrowMenu versionMenu = new ArrowMenu("Выбор версии Minecraft", versionOptions);
+        int versionChoice = versionMenu.show();
+        
+        if (versionChoice == -1 || versionChoice == versionOptions.size() - 1) return;
+        
+        MinecraftVersion selectedMc = allVersions.get(versionChoice);
+        String mcVersion = selectedMc.getId();
+        
+        String packName = askPackName();
+        if (packName == null) return;
+        
+        if (InstanceManager.getInstance(packName) != null) {
+            System.out.println(ZAnsi.brightRed("Сборка с таким именем уже существует!"));
+            ConsoleUtils.pause();
+            return;
         }
+        
+        InstanceManager.createInstanceFolder(packName);
+        Instance newInstance = InstanceManager.getInstance(packName);
+        
+        MinecraftLib lib = new MinecraftLib(newInstance);
+        boolean success = lib.installMinecraft(mcVersion);
+        
+        if (success) {
+            System.out.println(ZAnsi.brightGreen("\n[OK] Vanilla сборка '" + packName + "' успешно создана!"));
+        } else {
+            System.out.println(ZAnsi.brightRed("\n[FAIL] Не удалось создать сборку."));
+        }
+        
+        ConsoleUtils.pause();
+    }
 
+    private void createCustomInstance() throws Exception {
+        ConsoleUtils.clearScreen();
+        System.out.println(ZAnsi.cyan("Получение списка версий Minecraft..."));
+        
+        VersionInstaller versionInstaller = new VersionInstaller(null);
+        List<MinecraftVersion> allVersions = versionInstaller.getAvailableVersions();
+        
+        List<String> versionOptions = allVersions.stream()
+                .map(v -> v.getId() + "  (" + v.getType() + ")")
+                .collect(Collectors.toList());
+        versionOptions.add("Назад");
+        
+        ArrowMenu versionMenu = new ArrowMenu("Выбор версии Minecraft", versionOptions);
+        int versionChoice = versionMenu.show();
+        
+        if (versionChoice == -1 || versionChoice == versionOptions.size() - 1) return;
+        
+        MinecraftVersion selectedMc = allVersions.get(versionChoice);
+        String mcVersion = selectedMc.getId();
+        
+        // === Выбор лоадера с правильной проверкой поддержки ===
+        List<String> loaderOptions = buildLoaderOptions(mcVersion);
+        ArrowMenu loaderMenu = new ArrowMenu("Выбор модлоадера для " + mcVersion, loaderOptions);
+        int loaderChoice = loaderMenu.show();
+        
+        if (loaderChoice == -1 || loaderChoice == loaderOptions.size() - 1) return;
+        
+        String selectedLoader = loaderOptions.get(loaderChoice);
+        
+        if (selectedLoader.contains("Vanilla")) {
+            createVanillaInstance();
+            return;
+        }
+        
+        String loaderType = selectedLoader.contains("Fabric") ? "fabric" : "forge";
+        
+        String loaderVersion;
+        if (loaderType.equals("fabric")) {
+            loaderVersion = askFabricLoaderVersion();
+        } else {
+            loaderVersion = askForgeVersion(mcVersion);
+        }
+        
+        if (loaderVersion == null) return;
+        
+        String packName = askPackName();
+        if (packName == null) return;
+        
+        if (InstanceManager.getInstance(packName) != null) {
+            System.out.println(ZAnsi.brightRed("Сборка с таким именем уже существует!"));
+            ConsoleUtils.pause();
+            return;
+        }
+        
+        InstanceManager.createInstanceFolder(packName);
+        Instance newInstance = InstanceManager.getInstance(packName);
+        
+        MinecraftLib lib = new MinecraftLib(newInstance);
+        
+        boolean success = loaderType.equals("fabric")
+                ? lib.installFabric(mcVersion, loaderVersion)
+                : lib.installForge(mcVersion, loaderVersion);
+        
+        if (success) {
+            System.out.println(ZAnsi.brightGreen("\n[OK] Сборка '" + packName + "' успешно установлена!"));
+        } else {
+            System.out.println(ZAnsi.brightRed("\n[FAIL] Не удалось установить сборку."));
+        }
+        
         ConsoleUtils.pause();
     }
 
@@ -120,7 +269,7 @@ public class LaunchMenu {
 
     private List<String> buildLoaderOptions(String mcVersion) {
         List<String> options = new ArrayList<>();
-
+        
         if (isFabricSupported(mcVersion)) {
             options.add("Fabric");
         }
@@ -129,25 +278,22 @@ public class LaunchMenu {
         }
         options.add("Vanilla");
         options.add("Назад");
-
+        
         return options;
     }
-
+    
     private boolean isFabricSupported(String version) {
-        // Fabric стабильно работает с 1.14+
         return version.matches("^1\\.(1[4-9]|[2-9]\\d).*");
     }
-
+    
     private boolean isForgeSupported(String version) {
-        // Forge поддерживает примерно до 1.21.4 на текущий момент
-        // Для версий 1.22+ и экспериментальных — отключаем
         if (version.matches("^1\\.2[2-9].*") || version.matches("^\\d{2}.*")) {
             return false;
         }
         return version.matches("^1\\.(1[2-9]|[2-9]\\d).*") ||
                version.matches("^1\\.20.*") || version.matches("^1\\.21.*");
     }
-
+    
     private void manageInstance(Instance instance) throws Exception {
         while (true) {
             ConsoleUtils.clearScreen();
@@ -155,70 +301,120 @@ public class LaunchMenu {
             System.out.println(ZAnsi.white("Версия: " + instance.getMinecraftVersion()));
             System.out.println(ZAnsi.white("Лоадер: " + instance.getLoaderType() + 
                     (instance.getLoaderVersion() != null ? " " + instance.getLoaderVersion() : "")));
-
+            
+            if (instance.isServerPack()) {
+                System.out.println(ZAnsi.green("Серверная сборка: v" + instance.getServerVersion()));
+            }
+            
             List<String> options = new ArrayList<>();
             options.add("Запустить сборку");
+            if (instance.isServerPack()) {
+                options.add("Проверить обновления");
+            }
             options.add("Изменить версию лоадера");
             options.add("Удалить сборку");
             options.add("Назад");
-
+            
             ArrowMenu menu = new ArrowMenu("Действия", options);
             int choice = menu.show();
-
-            if (choice == -1 || choice == 3) return; // Esc или Назад
-
+            
+            if (choice == -1 || choice == options.size() - 1) return;
+            
             switch (choice) {
                 case 0 -> launchExistingInstance(instance);
-                case 1 -> changeLoaderVersion(instance);
-                case 2 -> deleteInstance(instance);
+                case 1 -> {
+                    if (instance.isServerPack()) {
+                        checkAndUpdateServerPack(instance);
+                    } else {
+                        changeLoaderVersion(instance);
+                    }
+                }
+                case 2 -> {
+                    if (instance.isServerPack()) {
+                        changeLoaderVersion(instance);
+                    } else {
+                        deleteInstance(instance);
+                    }
+                }
+                case 3 -> deleteInstance(instance);
             }
         }
     }
-
+    
+    private void checkAndUpdateServerPack(Instance instance) throws Exception {
+        ConsoleUtils.clearScreen();
+        System.out.println(ZAnsi.cyan("Проверка обновлений для " + instance.getName()));
+        
+        PackDownloader downloader = new PackDownloader(instance);
+        boolean hasUpdate = downloader.checkForUpdates(instance.getServerPackName());
+        
+        if (!hasUpdate) {
+            System.out.println(ZAnsi.green("Сборка актуальна (v" + instance.getServerVersion() + ")"));
+            ConsoleUtils.pause();
+            return;
+        }
+        
+        System.out.println(ZAnsi.brightYellow("Доступно обновление!"));
+        if (Input.confirm("Обновить сборку")) {
+            boolean success = downloader.updatePack(instance.getServerPackName());
+            if (success) {
+                System.out.println(ZAnsi.brightGreen("Сборка успешно обновлена!"));
+            } else {
+                System.out.println(ZAnsi.brightRed("Не удалось обновить сборку."));
+            }
+        } else {
+            System.out.println(ZAnsi.yellow("Обновление отменено."));
+        }
+        
+        ConsoleUtils.pause();
+    }
+    
     private void changeLoaderVersion(Instance instance) throws Exception {
         ConsoleUtils.clearScreen();
         System.out.println(ZAnsi.cyan("Изменение версии лоадера для " + instance.getName()));
-
+        
         String currentLoader = instance.getLoaderType();
         String mcVersion = instance.getMinecraftVersion();
-
+        
         if ("vanilla".equalsIgnoreCase(currentLoader)) {
             System.out.println(ZAnsi.yellow("Это vanilla сборка. Нельзя изменить лоадер."));
             ConsoleUtils.pause();
             return;
         }
-
+        
         String newLoaderVersion;
         if ("fabric".equalsIgnoreCase(currentLoader)) {
             newLoaderVersion = askFabricLoaderVersion();
         } else {
             newLoaderVersion = askForgeVersion(mcVersion);
         }
-
+        
         if (newLoaderVersion == null) return;
-
-        System.out.println(ZAnsi.cyan("Переустановка лоадера " + currentLoader + " → " + newLoaderVersion + "..."));
-
+        
+        System.out.println(ZAnsi.cyan("Переустановка лоадера " + currentLoader + " -> " + newLoaderVersion + "..."));
+        
         MinecraftLib lib = new MinecraftLib(instance);
         boolean success;
-
+        
         try {
             if ("fabric".equalsIgnoreCase(currentLoader)) {
                 success = lib.installFabric(mcVersion, newLoaderVersion);
             } else {
                 success = lib.installForge(mcVersion, newLoaderVersion);
             }
-
+            
             if (success) {
                 System.out.println(ZAnsi.brightGreen("Версия лоадера успешно изменена!"));
+            } else {
+                System.out.println(ZAnsi.brightRed("Не удалось изменить версию лоадера."));
             }
         } catch (Exception e) {
             System.out.println(ZAnsi.brightRed("Ошибка при смене лоадера: " + e.getMessage()));
         }
-
+        
         ConsoleUtils.pause();
     }
-
+    
     private void deleteInstance(Instance instance) throws IOException {
         ConsoleUtils.clearScreen();
         
@@ -226,15 +422,15 @@ public class LaunchMenu {
             "Да, удалить сборку",
             "Нет, отменить"
         );
-    
+        
         ArrowMenu confirmMenu = new ArrowMenu(
             "Вы действительно хотите удалить сборку '" + instance.getName() + "'?", 
             confirmOptions
         );
-    
+        
         int choice = confirmMenu.show();
-    
-        if (choice == 0) {  // "Да, удалить"
+        
+        if (choice == 0) {
             boolean deleted = InstanceManager.deleteInstance(instance.getName());
             if (deleted) {
                 System.out.println(ZAnsi.brightGreen("Сборка '" + instance.getName() + "' успешно удалена."));
@@ -244,105 +440,89 @@ public class LaunchMenu {
         } else {
             System.out.println(ZAnsi.yellow("Удаление отменено."));
         }
-    
+        
         ConsoleUtils.pause();
     }
-
+    
     private String askFabricLoaderVersion() throws Exception {
         System.out.println(ZAnsi.cyan("Получение списка версий Fabric Loader..."));
         List<String> versions = ZHttpClient.getFabricLoaderVersions();
-
+        
         List<String> options = versions.stream()
-                .limit(30)                    // увеличил до 30
+                .limit(30)
                 .map(v -> "Fabric Loader " + v)
                 .collect(Collectors.toList());
         options.add("Назад");
-
+        
         ArrowMenu menu = new ArrowMenu("Выбор версии Fabric Loader", options);
         int choice = menu.show();
-
+        
         if (choice == -1 || choice == options.size() - 1) return null;
         return versions.get(choice);
     }
-
+    
     private String askForgeVersion(String mcVersion) throws Exception {
         System.out.println(ZAnsi.cyan("Получение списка версий Forge для " + mcVersion + "..."));
-
-        // Получаем все версии Forge из Maven
+        
         List<String> allForgeVersions = getAllForgeVersions();
-
-        // Фильтруем только те, которые подходят под нашу версию Minecraft
+        
         List<String> compatibleVersions = allForgeVersions.stream()
                 .filter(v -> v.startsWith(mcVersion + "-"))
-                .map(v -> v.substring(mcVersion.length() + 1)) // убираем "1.20.1-" 
+                .map(v -> v.substring(mcVersion.length() + 1))
                 .collect(Collectors.toList());
-
+        
         if (compatibleVersions.isEmpty()) {
             System.out.println(ZAnsi.yellow("Не найдено совместимых версий Forge для " + mcVersion));
             ConsoleUtils.pause();
             return null;
         }
-
+        
         List<String> options = compatibleVersions.stream()
+                .limit(30)
                 .map(v -> "Forge " + v)
                 .collect(Collectors.toList());
         options.add("Назад");
-
+        
         ArrowMenu menu = new ArrowMenu("Выбор версии Forge для " + mcVersion, options);
         int choice = menu.show();
-
+        
         if (choice == -1 || choice == options.size() - 1) return null;
-
+        
         return compatibleVersions.get(choice);
     }
-
+    
     private String askPackName() {
         System.out.print(ZAnsi.white("\nВведите название новой сборки: "));
-        String name = Input.readLine();           // используем наш Input
+        String name = Input.readLine();
         if (name.isEmpty()) {
             System.out.println(ZAnsi.yellow("Отменено."));
             return null;
         }
         return name;
     }
-
-    private void createVanillaInstance(String mcVersion) throws Exception {
-        String packName = askPackName();
-        if (packName == null) return;
-
-        InstanceManager.createInstanceFolder(packName);
-        Instance newInstance = InstanceManager.getInstance(packName);
-
-        MinecraftLib lib = new MinecraftLib(newInstance);
-        boolean success = lib.installMinecraft(mcVersion);
-
-        if (success) {
-            System.out.println(ZAnsi.brightGreen("\nVanilla сборка '" + packName + "' успешно создана!"));
-        }
-    }
-
+    
     private void launchExistingInstance(Instance instance) {
         ConsoleUtils.clearScreen();
         System.out.println(ZAnsi.brightGreen("Запуск сборки: " + instance.getName()));
-
+        
         MinecraftLib lib = new MinecraftLib(instance);
         LaunchOptions options = new LaunchOptions();
-
+        
         try {
             lib.launch(options);
         } catch (Exception e) {
             System.out.println(ZAnsi.brightRed("Ошибка при запуске: " + e.getMessage()));
+            e.printStackTrace();
         }
-
+        
         ConsoleUtils.pause();
     }
-
+    
     private List<String> getAllForgeVersions() throws Exception {
         String metadataUrl = "https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml";
         
-        String xml = ZHttpClient.downloadString(metadataUrl);   // добавь этот метод в ZHttpClient, если его нет
+        String xml = ZHttpClient.downloadString(metadataUrl);
         
-        // Парсим простым способом (без XML парсера)
         List<String> versions = new ArrayList<>();
         int index = 0;
         
@@ -350,15 +530,14 @@ public class LaunchMenu {
             int start = index + 9;
             int end = xml.indexOf("</version>", start);
             if (end == -1) break;
-        
+            
             String version = xml.substring(start, end).trim();
             versions.add(version);
             index = end;
         }
-    
-        // Сортируем по убыванию (новые сверху)
+        
         versions.sort((a, b) -> b.compareTo(a));
-    
+        
         return versions;
     }
 }
