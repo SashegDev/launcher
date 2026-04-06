@@ -191,26 +191,55 @@ public class FabricInstaller {
     }
 
     private String getLatestInstallerVersion() throws Exception {
-        String url = "https://maven.fabricmc.net/net/fabricmc/fabric-installer/maven-metadata.xml";
-        String xml = downloadString(url);
+        // Пробуем HTTPS сначала
+        String[] urls = {
+            "https://maven.fabricmc.net/net/fabricmc/fabric-installer/maven-metadata.xml",
+            "http://maven.fabricmc.net/net/fabricmc/fabric-installer/maven-metadata.xml"
+        };
 
-        int start = xml.indexOf("<latest>") + 8;
-        int end = xml.indexOf("</latest>", start);
-        return xml.substring(start, end).trim();
+        for (String url : urls) {
+            try {
+                String xml = downloadString(url);
+                int start = xml.indexOf("<latest>") + 8;
+                int end = xml.indexOf("</latest>", start);
+                return xml.substring(start, end).trim();
+            } catch (Exception e) {
+                System.out.println(ZAnsi.yellow("Не удалось получить версию из " + url + ": " + e.getMessage()));
+                // продолжаем со следующим URL
+            }
+        }
+
+        throw new Exception("Не удалось получить версию Fabric Installer ни с одного источника");
     }
 
     private String downloadString(String url) throws Exception {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .timeout(Duration.ofSeconds(30))
-                .GET()
-                .build();
+        // Увеличиваем таймауты и добавляем ретраи
+        Exception lastException = null;
         
-        HttpResponse<String> resp = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        if (resp.statusCode() != 200) {
-            throw new IOException("HTTP " + resp.statusCode() + " при скачивании " + url);
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            try {
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(url))
+                        .timeout(Duration.ofSeconds(30 * attempt)) // увеличиваем таймаут с каждой попыткой
+                        .header("User-Agent", "ZernMC-Launcher/1.0")
+                        .GET()
+                        .build();
+                
+                HttpResponse<String> resp = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                if (resp.statusCode() == 200) {
+                    return resp.body();
+                }
+                throw new IOException("HTTP " + resp.statusCode());
+            } catch (Exception e) {
+                lastException = e;
+                System.out.println(ZAnsi.yellow("Попытка " + attempt + " не удалась: " + e.getMessage()));
+                if (attempt < 3) {
+                    Thread.sleep(1000 * attempt);
+                }
+            }
         }
-        return resp.body();
+        
+        throw lastException;
     }
 
     private void downloadFile(String url, Path target) throws Exception {

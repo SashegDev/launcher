@@ -77,20 +77,22 @@ public class VersionInstaller {
         System.out.println(ZAnsi.cyan("Скачивание библиотек..."));
         downloadLibraries(versionData.getJSONArray("libraries"));
 
-        // Ассеты - ЭТО ВАЖНО
-        String assetIndex = versionData.getString("assets");  // ← Например "5" для 1.20.1
-        System.out.println(ZAnsi.cyan("Asset index из версии: " + assetIndex));
-
+        String assetIndex;
         if (versionData.has("assetIndex")) {
-            System.out.println(ZAnsi.cyan("Скачивание ассетов..."));
-            downloadAssets(versionData);
-            System.out.println(ZAnsi.brightGreen("Asset index определён как: " + assetIndex));
+            JSONObject assetIndexObj = versionData.getJSONObject("assetIndex");
+            assetIndex = assetIndexObj.getString("id");  // ← это "5" для 1.20.1
         } else {
-            System.out.println(ZAnsi.yellow("Нет assetIndex в версии, использую fallback: " + assetIndex));
+            assetIndex = versionData.getString("assets"); // fallback
         }
 
+        System.out.println(ZAnsi.cyan("Asset index: " + assetIndex));
+
+        // Скачиваем ассеты используя правильный индекс
+        System.out.println(ZAnsi.cyan("Скачивание ассетов..."));
+        downloadAssets(versionData, assetIndex);
+
         System.out.println(ZAnsi.brightGreen("\nMinecraft " + versionId + " полностью установлен!"));
-        return assetIndex;  // ← Возвращаем правильный индекс (например "5")
+        return assetIndex;  // ← возвращаем "5" а не "1.20.1"
     }
 
     private void downloadLibraries(JSONArray libraries) throws Exception {
@@ -119,23 +121,23 @@ public class VersionInstaller {
         ProgressBar.finish("Библиотеки загружены");
     }
 
-    private void downloadAssets(JSONObject versionData) throws Exception {
+    private void downloadAssets(JSONObject versionData, String assetIndex) throws Exception {
+        // Находим URL для asset index
         JSONObject assetIndexInfo = versionData.getJSONObject("assetIndex");
         String indexUrl = assetIndexInfo.getString("url");
-        String indexId = versionData.getString("assets");
 
         Path indexesDir = minecraftDir.resolve("assets/indexes");
         Files.createDirectories(indexesDir);
-        Path indexPath = indexesDir.resolve(indexId + ".json");
+        Path indexPath = indexesDir.resolve(assetIndex + ".json");  // ← используем assetIndex
 
-        System.out.println(ZAnsi.cyan("Скачивание asset index (" + indexId + ")..."));
+        System.out.println(ZAnsi.cyan("Скачивание asset index (" + assetIndex + ")..."));
         downloadFile(indexUrl, indexPath, "asset index");
 
         String jsonContent = Files.readString(indexPath);
         JSONObject root = new JSONObject(jsonContent);
         JSONObject objects = root.getJSONObject("objects");
 
-        System.out.println(ZAnsi.cyan("Скачивание " + objects.length() + " объектов ассетов (index: " + indexId + ")..."));
+        System.out.println(ZAnsi.cyan("Скачивание " + objects.length() + " объектов ассетов (index: " + assetIndex + ")..."));
 
         int total = objects.length();
         int[] success = {0};

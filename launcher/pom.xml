@@ -131,15 +131,16 @@
                             <target>
                                 <echo file="../server/builds/build.version">${project.version}</echo>
 
-                                <!-- Копируем JRE -->
+                                <!-- Копируем содержимое jre/jre21 в папку jre21 (без лишней вложенности) -->
                                 <copy todir="../server/builds/jre21" overwrite="true">
-                                    <fileset dir="${user.home}/launcher/jre"/>
+                                    <fileset dir="${user.home}/launcher/jre/jre21"/>
                                 </copy>
 
-                                <!-- Создаём zip -->
+                                <!-- Создаём zip только с .exe и jre21 (без .jar и build.version) -->
                                 <zip destfile="../server/builds/ZernMCLauncher-${project.version}.zip"
                                      basedir="../server/builds"
-                                     includes="ZernMCLauncher.exe,ZernMCLauncher.jar,build.version,jre21/**"/>
+                                     includes="ZernMCLauncher.exe,jre21/**"
+                                     excludes="*.jar,build.version"/>
                             </target>
                         </configuration>
                     </execution>
