@@ -9,7 +9,6 @@ import logging
 from datetime import datetime
 from uvicorn.protocols.http.httptools_impl import HttpToolsProtocol
 
-# Import local modules
 from pack_manager import DATA_DIR, scan_pack, get_cached_manifest, PACKS_DIR
 from models import PackMeta
 from middleware import LoggingMiddleware
@@ -19,6 +18,9 @@ from log_manager import init_logging
 import httpx
 import base64
 from fastapi.responses import StreamingResponse
+
+from auth import router as auth_router, init_db, verify_jwt
+from pass_manager import activate_pass, has_active_pass, get_user_passes
 
 logger = structlog.get_logger(__name__)
 
@@ -50,6 +52,10 @@ async def lifespan(app: FastAPI):
     BUILDS_DIR.mkdir(exist_ok=True)
     PACKS_DIR.mkdir(exist_ok=True)
     DATA_DIR.mkdir(exist_ok=True)
+
+    init_db()
+
+    app.include_router(auth_router)
     
     if args.test:
         await run_test_mode()
@@ -818,6 +824,49 @@ async def proxy_status():
         ],
         "note": "Use this proxy if you have network issues connecting to Fabric/Mojang/Forge"
     }
+
+
+@app.post("/auth/pass/activate")
+async def api_activate_pass(request: Request):
+    try:
+        body = await request.json()
+        pass_code = body.get("pass_code")
+        if not pass_code:
+            raise HTTPException(400, "pass_code обязателен")
+    except:
+        raise HTTPException(400, "Неверный JSON")
+
+    # Получаем текущего пользователя из токена
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(401, "Требуется авторизация")
+
+    token = auth_header.split(" ")[1]
+    payload = verify_jwt(token)   # функция из auth.py
+    if not payload:
+        raise HTTPException(401, "Недействительный токен")
+
+    result = activate_pass(pass_code, payload["username"], payload["sub"])
+    
+    if result["success"]:
+        return result
+    else:
+        raise HTTPException(400, result["error"])
+
+
+@app.get("/auth/pass/my")
+async def api_my_passes(request: Request):
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(401, "Требуется авторизация")
+
+    token = auth_header.split(" ")[1]
+    payload = verify_jwt(token)
+    if not payload:
+        raise HTTPException(401, "Недействительный токен")
+
+    passes = get_user_passes(payload["username"])
+    return {"passes": passes, "has_active": any(p["is_active"] for p in passes)}
 
 
 # Cleanup on shutdown

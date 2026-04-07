@@ -113,6 +113,10 @@ public class Config {
         return CONFIG_DIR.resolve("jre");
     }
 
+    public static Path getConfigDir() {
+        return CONFIG_DIR;
+    }
+
     /**
      * Полезная информация для пользователя
      */

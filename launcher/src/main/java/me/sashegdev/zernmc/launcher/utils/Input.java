@@ -1,10 +1,18 @@
 package me.sashegdev.zernmc.launcher.utils;
 
+import me.sashegdev.zernmc.launcher.ui.ArrowMenu;
+
+import java.io.IOException;
+import java.util.List;
 import java.util.Scanner;
 
+/**
+ * Улучшенный Input с поддержкой кириллицы и confirm через ArrowMenu
+ */
 public class Input {
 
-    private static final Scanner scanner = new Scanner(System.in);
+    // Используем UTF-8 явно — это помогает на Windows
+    private static final Scanner scanner = new Scanner(System.in, "UTF-8");
 
     public static String readLine() {
         return scanner.nextLine().trim();
@@ -36,9 +44,39 @@ public class Input {
         }
     }
 
-    public static boolean confirm(String prompt) {
-        System.out.print(prompt + " (да/нет): ");
-        String answer = scanner.nextLine().trim().toLowerCase();
-        return answer.equals("да") || answer.equals("y") || answer.equals("yes");
+    /**
+     * Новый confirm через ArrowMenu
+     * @throws IOException 
+     */
+    public static boolean confirm(String question) throws IOException {
+        ConsoleUtils.clearScreen(); // опционально, можно убрать
+
+        List<String> options = List.of(
+            "Да",
+            "Нет"
+        );
+
+        ArrowMenu menu = new ArrowMenu(question, options);
+        int choice = menu.show();
+
+        return choice == 0; // 0 = "Да"
+    }
+
+    /**
+     * Альтернативный confirm без очистки экрана
+     * @throws IOException 
+     */
+    public static boolean confirmInline(String question) throws IOException {
+        List<String> options = List.of("Да", "Нет");
+        ArrowMenu menu = new ArrowMenu(question, options);
+        int choice = menu.show();
+        return choice == 0;
+    }
+
+    /**
+     * Закрытие сканнера (вызывать при выходе из программы, если нужно)
+     */
+    public static void close() {
+        scanner.close();
     }
 }

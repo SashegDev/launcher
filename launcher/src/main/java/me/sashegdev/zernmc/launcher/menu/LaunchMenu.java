@@ -1,5 +1,6 @@
 package me.sashegdev.zernmc.launcher.menu;
 
+import me.sashegdev.zernmc.launcher.auth.AuthManager;
 import me.sashegdev.zernmc.launcher.minecraft.Instance;
 import me.sashegdev.zernmc.launcher.minecraft.InstanceManager;
 import me.sashegdev.zernmc.launcher.minecraft.MinecraftLib;
@@ -80,6 +81,32 @@ public class LaunchMenu {
     }
 
     private void installServerPack() throws Exception {
+        if (!AuthManager.hasActivePass()) {
+            ConsoleUtils.clearScreen();
+            System.out.println(ZAnsi.brightRed("У вас нет активной проходки!"));
+            System.out.println(ZAnsi.white("Чтобы скачивать сборки с сервера ZernMC, необходимо активировать проходку."));
+            System.out.println();
+            System.out.print(ZAnsi.white("Введите код проходки (ZERN-XXXXXXX) или Enter для отмены: "));
+
+            String code = Input.readLine();
+            if (code.isEmpty()) return;
+
+            String result = AuthManager.activatePass(code);
+            System.out.println(ZAnsi.cyan(result));
+
+            if (!result.contains("успешно")) {
+                ConsoleUtils.pause();
+                return;
+            }
+
+            // Повторная проверка
+            if (!AuthManager.hasActivePass()) {
+                System.out.println(ZAnsi.brightRed("Не удалось активировать проходку."));
+                ConsoleUtils.pause();
+                return;
+            }
+        }
+
         ConsoleUtils.clearScreen();
         System.out.println(ZAnsi.cyan("Получение списка доступных сборок с сервера..."));
         
@@ -502,11 +529,22 @@ public class LaunchMenu {
     }
     
     private void launchExistingInstance(Instance instance) {
+        if (instance.isServerPack() && !AuthManager.hasActivePass()) {
+            ConsoleUtils.clearScreen();
+            System.out.println(ZAnsi.brightRed("Для запуска серверной сборки требуется активная проходка!"));
+            ConsoleUtils.pause();
+            return;
+        }
         ConsoleUtils.clearScreen();
         System.out.println(ZAnsi.brightGreen("Запуск сборки: " + instance.getName()));
         
         MinecraftLib lib = new MinecraftLib(instance);
-        LaunchOptions options = new LaunchOptions();
+                LaunchOptions options = new LaunchOptions();
+        
+        // Авторизация Minecraft
+        options.setUsername(AuthManager.getUsername());
+        options.setUuid(AuthManager.getUuid());
+        options.setAccessToken(AuthManager.getAccessToken());
         
         try {
             lib.launch(options);

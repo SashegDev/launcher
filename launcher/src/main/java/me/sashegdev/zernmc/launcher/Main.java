@@ -1,5 +1,6 @@
 package me.sashegdev.zernmc.launcher;
 
+import me.sashegdev.zernmc.launcher.auth.AuthManager;
 import me.sashegdev.zernmc.launcher.menu.*;
 import me.sashegdev.zernmc.launcher.ui.ArrowMenu;
 import me.sashegdev.zernmc.launcher.utils.*;
@@ -17,8 +18,12 @@ public class Main {
 
     private static final String CURRENT_VERSION = Version.getCurrentVersion();
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws IOException {
         System.setProperty("org.jline.terminal.disableDeprecatedProviderWarning", "true");
+        System.setProperty("file.encoding", "UTF-8");
+        System.setProperty("sun.err.encoding", "UTF-8");
+        System.setProperty("sun.stdout.encoding", "UTF-8");
+        java.nio.charset.Charset.defaultCharset();
         ZAnsi.install();
 
         System.out.print("\033[H\033[2J");
@@ -28,6 +33,23 @@ public class Main {
         ZHttpClient.checkAllServicesOnStartup();
 
         checkAndAutoUpdateLauncher();
+
+        // === АВТОРИЗАЦИЯ ===
+        System.out.println(ZAnsi.cyan("Проверка авторизации..."));
+        boolean sessionRestored = AuthManager.loadSavedSession();
+
+        if (!sessionRestored) {
+            LoginMenu loginMenu = new LoginMenu();
+            boolean loggedIn = loginMenu.show();
+            if (!loggedIn) {
+                System.out.println(ZAnsi.yellow("До свидания!"));
+                ZAnsi.uninstall();
+                System.exit(0);
+            }
+        } else {
+            System.out.println(ZAnsi.brightGreen("Добро пожаловать обратно, " + AuthManager.getUsername() + "!"));
+        }
+        // === КОНЕЦ АВТОРИЗАЦИИ ===
 
         try {
             mainLoop();
