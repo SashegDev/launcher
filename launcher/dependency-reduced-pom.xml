@@ -54,10 +54,10 @@
                 <minVersion>21</minVersion>
               </jre>
               <versionInfo>
-                <fileVersion>${project.version}</fileVersion>
+                <fileVersion>${project.version}.0</fileVersion>
                 <txtFileVersion>${project.version}</txtFileVersion>
                 <fileDescription>ZernMC Launcher — самописный Minecraft лаунчер</fileDescription>
-                <productVersion>${project.version}</productVersion>
+                <productVersion>${project.version}.0</productVersion>
                 <txtProductVersion>${project.version}</txtProductVersion>
                 <productName>ZernMC Launcher</productName>
                 <companyName>ZernMC(SashegDev)</companyName>
