@@ -112,7 +112,7 @@ public class LoginMenu {
         System.out.println(ZAnsi.cyan("  [ Создание аккаунта ]"));
         System.out.println();
         System.out.println(ZAnsi.yellow("  Допустимые символы в имени: a-z, A-Z, 0-9, _"));
-        System.out.println(ZAnsi.yellow("  Длина имени: 3–16 символов | Длина пароля: от 6 символов"));
+        System.out.println(ZAnsi.yellow("  Длина имени: 3-16 символов | Длина пароля: от 6 символов"));
         System.out.println();
 
         String username = Input.readLine(ZAnsi.white("  Имя пользователя: "));
