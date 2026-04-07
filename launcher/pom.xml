@@ -6,7 +6,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>me.sashegdev</groupId>
     <artifactId>ZernMCLauncher</artifactId>
-    <version>1.0.5</version>
+    <version>1.0.6</version>
     <packaging>jar</packaging>
 
     <properties>
@@ -76,6 +76,8 @@
                                         <Implementation-Version>${project.version}</Implementation-Version>
                                         <Implementation-Title>ZernMC Launcher</Implementation-Title>
                                         <Implementation-Vendor>SashegDev</Implementation-Vendor>
+                                        <Implementation-Description>Полностью самописный Minecraft-лаунчер. Написанный SashegDev(в основном)</Implementation-Description>
+                                        <Implementation-URL>https://github.com/SashegDev/launcher</Implementation-URL>
                                     </manifestEntries>
                                 </transformer>
                             </transformers>
@@ -106,12 +108,15 @@
                                 <minVersion>21</minVersion>
                             </jre>
                             <versionInfo>
-                                <fileVersion>1.0.0.0</fileVersion>
-                                <txtFileVersion>1.0.0</txtFileVersion>
-                                <fileDescription>ZernMC Launcher</fileDescription>
-                                <productVersion>1.0.0.0</productVersion>
-                                <txtProductVersion>1.0.0</txtProductVersion>
+                                <fileVersion>${project.version}</fileVersion>
+                                <txtFileVersion>${project.version}</txtFileVersion>
+                                <fileDescription>ZernMC Launcher — самописный Minecraft лаунчер</fileDescription>
+                                <productVersion>${project.version}</productVersion>
+                                <txtProductVersion>${project.version}</txtProductVersion>
                                 <productName>ZernMC Launcher</productName>
+                                <companyName>ZernMC(SashegDev)</companyName>
+                                <internalName>ZernMCLauncher</internalName>
+                                <originalFilename>ZernMCLauncher.exe</originalFilename>
                             </versionInfo>
                         </configuration>
                     </execution>
