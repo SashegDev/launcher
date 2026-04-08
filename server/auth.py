@@ -80,7 +80,7 @@ def init_db():
             last_login REAL
         );
 
-        CREATE TABLE IF NOT EXISTS passes (                  -- НОВАЯ ТАБЛИЦА
+        CREATE TABLE IF NOT EXISTS passes (
             code TEXT PRIMARY KEY,                           -- ZERN-XXXXXX
             is_used BOOLEAN DEFAULT 0,
             activated_by INTEGER REFERENCES users(id),
@@ -95,6 +95,13 @@ def init_db():
             pass_code TEXT REFERENCES passes(code),
             activated_at REAL NOT NULL,
             PRIMARY KEY (user_id, pass_code)
+        );
+                       
+        CREATE TABLE IF NOT EXISTS refresh_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            token_hash TEXT NOT NULL,
+            expires_at REAL NOT NULL
         );
     """)
     conn.commit()
@@ -143,7 +150,7 @@ async def register(body: RegisterRequest, request: Request):
     conn = get_db()
     try:
         if conn.execute("SELECT 1 FROM users WHERE username = ? COLLATE NOCASE", (body.username,)).fetchone():
-            raise HTTPException(409, "Имя пользователя уже занято")
+            raise HTTPException(status_code=409, detail="Имя пользователя уже занято")
 
         uuid = generate_uuid()
         pw_hash = hash_password(body.password)
@@ -156,9 +163,18 @@ async def register(body: RegisterRequest, request: Request):
         user_id = conn.lastrowid
         conn.commit()
 
-        return _issue_tokens(conn, user_id, body.username, uuid)
+        # Вызываем функцию и явно преобразуем в dict, чтобы избежать проблем сериализации
+        tokens = _issue_tokens(conn, user_id, body.username, uuid)
+        return tokens.model_dump() if hasattr(tokens, "model_dump") else tokens
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Register error", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
     finally:
         conn.close()
+
 
 
 @router.post("/login", response_model=TokenResponse)

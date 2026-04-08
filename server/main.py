@@ -869,6 +869,15 @@ async def api_my_passes(request: Request):
     return {"passes": passes, "has_active": any(p["is_active"] for p in passes)}
 
 
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled exception", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error", "type": type(exc).__name__}
+    )
+
+
 # Cleanup on shutdown
 @app.on_event("shutdown")
 async def shutdown_proxy():

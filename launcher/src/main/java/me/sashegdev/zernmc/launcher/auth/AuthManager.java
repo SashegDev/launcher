@@ -2,6 +2,8 @@ package me.sashegdev.zernmc.launcher.auth;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.google.gson.annotations.SerializedName;
 import me.sashegdev.zernmc.launcher.utils.Config;
 import me.sashegdev.zernmc.launcher.utils.ZAnsi;
@@ -141,15 +143,17 @@ public class AuthManager {
 
     private static String extractError(String body) {
         try {
-            int idx = body.indexOf("\"detail\"");
-            if (idx != -1) {
-                int s = body.indexOf("\"", idx + 9) + 1;
-                int e = body.indexOf("\"", s);
-                if (e > s) return body.substring(s, e);
+            JsonObject json = JsonParser.parseString(body).getAsJsonObject();
+            if (json.has("detail")) {
+                return json.get("detail").getAsString();
+            }
+            if (json.has("error")) {
+                return json.get("error").getAsString();
             }
         } catch (Exception ignored) {}
-        return "Неизвестная ошибка";
+        return body.length() > 200 ? body.substring(0, 200) + "..." : body;
     }
+
 
     // ====================== ВНУТРЕННИЕ КЛАССЫ ======================
 
