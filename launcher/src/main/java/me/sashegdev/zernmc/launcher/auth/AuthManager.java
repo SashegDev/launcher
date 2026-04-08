@@ -50,11 +50,11 @@ public class AuthManager {
         try {
             String body = GSON.toJson(new LoginRequest(username, password));
             
-            System.out.println(ZAnsi.cyan("[AUTH] Отправка запроса: " + endpoint));
+            //System.out.println(ZAnsi.cyan("[AUTH] Отправка запроса: " + endpoint));
             
             SimpleHttpResponse resp = post(endpoint, body);
             
-            System.out.println(ZAnsi.cyan("[AUTH] Ответ: HTTP " + resp.statusCode()));
+            //System.out.println(ZAnsi.cyan("[AUTH] Ответ: HTTP " + resp.statusCode()));
             
             if (resp.statusCode() == 200) {
                 session = GSON.fromJson(resp.body(), AuthSession.class);
@@ -67,7 +67,7 @@ public class AuthManager {
                 return AuthResult.fail(extractError(resp.body()));
             }
         } catch (Exception e) {
-            System.err.println(ZAnsi.red("[AUTH] Исключение: " + e.getMessage()));
+            //System.err.println(ZAnsi.red("[AUTH] Исключение: " + e.getMessage()));
             e.printStackTrace();
             return AuthResult.fail("Ошибка соединения: " + e.getMessage());
         }
@@ -138,7 +138,7 @@ public class AuthManager {
 
     private static SimpleHttpResponse post(String endpoint, String jsonBody) throws Exception {
         String fullUrl = ZHttpClient.getBaseUrl() + endpoint;
-        
+
         java.net.HttpURLConnection conn = null;
         try {
             java.net.URL url = java.net.URI.create(fullUrl).toURL();
@@ -147,28 +147,34 @@ public class AuthManager {
             conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
             conn.setRequestProperty("Accept", "application/json");
             conn.setRequestProperty("User-Agent", "ZernMC-Launcher/1.0");
+
+            // Добавляем токен авторизации, если есть сессия
+            if (session != null && session.accessToken != null) {
+                conn.setRequestProperty("Authorization", "Bearer " + session.accessToken);
+            }
+
             conn.setDoOutput(true);
             conn.setConnectTimeout(15000);
             conn.setReadTimeout(15000);
-            
+
             try (java.io.OutputStream os = conn.getOutputStream()) {
                 byte[] input = jsonBody.getBytes(StandardCharsets.UTF_8);
                 os.write(input, 0, input.length);
             }
-            
+
             int statusCode = conn.getResponseCode();
-            
+
             java.io.InputStream is = (statusCode >= 200 && statusCode < 300) 
                 ? conn.getInputStream() 
                 : conn.getErrorStream();
-            
+
             String responseBody;
             try (java.util.Scanner scanner = new java.util.Scanner(is, StandardCharsets.UTF_8.name())) {
                 responseBody = scanner.useDelimiter("\\A").hasNext() ? scanner.next() : "";
             }
-            
+
             return new SimpleHttpResponse(statusCode, responseBody);
-            
+
         } finally {
             if (conn != null) conn.disconnect();
         }
@@ -208,14 +214,19 @@ public class AuthManager {
         try {
             String json = "{\"pass_code\":\"" + passCode.toUpperCase() + "\"}";
             SimpleHttpResponse resp = post("/auth/pass/activate", json);
-            
+
+            System.out.println(ZAnsi.cyan("[AUTH] Активация проходки: HTTP " + resp.statusCode()));
+
             if (resp.statusCode() == 200) {
                 return "Проходка успешно активирована!";
+            } else if (resp.statusCode() == 401) {
+                return "Ошибка: Требуется авторизация. Перезайдите в аккаунт.";
             } else {
                 String error = extractError(resp.body());
                 return "Ошибка: " + error;
             }
         } catch (Exception e) {
+            e.printStackTrace();
             return "Ошибка соединения: " + e.getMessage();
         }
     }
