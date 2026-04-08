@@ -150,21 +150,17 @@ public class AuthManager {
 
     private static HttpResponse<String> post(String endpoint, String jsonBody) throws Exception {
         String fullUrl = ZHttpClient.getBaseUrl() + endpoint;
-        
+
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(fullUrl))
                 .header("Content-Type", "application/json; charset=utf-8")
                 .header("Accept", "application/json")
                 .header("User-Agent", "ZernMC-Launcher/1.0")
-                .header("Connection", "close")
+                // .header("Connection", "close")
                 .timeout(Duration.ofSeconds(15))
                 .POST(HttpRequest.BodyPublishers.ofString(jsonBody, StandardCharsets.UTF_8))
                 .build();
-        
-        // Логируем для отладки
-        System.out.println(ZAnsi.cyan("[HTTP] → POST " + fullUrl));
-        System.out.println(ZAnsi.cyan("[HTTP] Body: " + jsonBody));
-        
+
         return HTTP.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
     }
 
