@@ -10,25 +10,16 @@ import me.sashegdev.zernmc.launcher.utils.ZAnsi;
 import me.sashegdev.zernmc.launcher.utils.ZHttpClient;
 
 import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 
 public class AuthManager {
 
     private static final Path AUTH_FILE = Config.getConfigDir().resolve("auth.json");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private static final HttpClient HTTP = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(15))
-            .version(HttpClient.Version.HTTP_1_1)
-            .build();
 
-    private static volatile AuthSession session = null;  // ← volatile для потокобезопасности
+    private static volatile AuthSession session = null;
 
     public static boolean loadSavedSession() {
         if (!Files.exists(AUTH_FILE)) return false;
@@ -59,11 +50,10 @@ public class AuthManager {
         try {
             String body = GSON.toJson(new LoginRequest(username, password));
             
-            // Логируем для отладки
             System.out.println(ZAnsi.cyan("[AUTH] Отправка запроса: " + endpoint));
             
-            HttpResponse<String> resp = post(endpoint, body);
-
+            SimpleHttpResponse resp = post(endpoint, body);
+            
             System.out.println(ZAnsi.cyan("[AUTH] Ответ: HTTP " + resp.statusCode()));
             
             if (resp.statusCode() == 200) {
@@ -72,7 +62,6 @@ public class AuthManager {
                 saveSession();
                 return AuthResult.ok();
             } else if (resp.statusCode() == 422) {
-                // Ошибка валидации — парсим детали
                 return AuthResult.fail("Ошибка валидации: " + extractError(resp.body()));
             } else {
                 return AuthResult.fail(extractError(resp.body()));
@@ -109,7 +98,6 @@ public class AuthManager {
     public static String getAccessToken() {
         if (session == null) return "0";
         if (isAccessTokenExpired()) {
-            // ВАЖНО: в UI-контексте это плохо, но пока оставим
             tryRefresh();
         }
         return session != null && session.accessToken != null ? session.accessToken : "0";
@@ -124,8 +112,8 @@ public class AuthManager {
         if (session == null || session.refreshToken == null) return false;
         try {
             String body = "{\"refresh_token\":\"" + session.refreshToken + "\"}";
-            HttpResponse<String> resp = post("/auth/refresh", body);
-
+            SimpleHttpResponse resp = post("/auth/refresh", body);
+            
             if (resp.statusCode() == 200) {
                 AuthSession newSession = GSON.fromJson(resp.body(), AuthSession.class);
                 newSession.expiresAt = System.currentTimeMillis() / 1000L + newSession.expiresIn;
@@ -148,42 +136,60 @@ public class AuthManager {
         }
     }
 
-    private static HttpResponse<String> post(String endpoint, String jsonBody) throws Exception {
+    private static SimpleHttpResponse post(String endpoint, String jsonBody) throws Exception {
         String fullUrl = ZHttpClient.getBaseUrl() + endpoint;
-
-        HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create(fullUrl))
-                .header("Content-Type", "application/json; charset=utf-8")
-                .header("Accept", "application/json")
-                .header("User-Agent", "ZernMC-Launcher/1.0")
-                // .header("Connection", "close")
-                .timeout(Duration.ofSeconds(15))
-                .POST(HttpRequest.BodyPublishers.ofString(jsonBody, StandardCharsets.UTF_8))
-                .build();
-
-        return HTTP.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        
+        java.net.HttpURLConnection conn = null;
+        try {
+            java.net.URL url = java.net.URI.create(fullUrl).toURL();
+            conn = (java.net.HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            conn.setRequestProperty("Accept", "application/json");
+            conn.setRequestProperty("User-Agent", "ZernMC-Launcher/1.0");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(15000);
+            
+            try (java.io.OutputStream os = conn.getOutputStream()) {
+                byte[] input = jsonBody.getBytes(StandardCharsets.UTF_8);
+                os.write(input, 0, input.length);
+            }
+            
+            int statusCode = conn.getResponseCode();
+            
+            java.io.InputStream is = (statusCode >= 200 && statusCode < 300) 
+                ? conn.getInputStream() 
+                : conn.getErrorStream();
+            
+            String responseBody;
+            try (java.util.Scanner scanner = new java.util.Scanner(is, StandardCharsets.UTF_8.name())) {
+                responseBody = scanner.useDelimiter("\\A").hasNext() ? scanner.next() : "";
+            }
+            
+            return new SimpleHttpResponse(statusCode, responseBody);
+            
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
     }
 
     private static String extractError(String body) {
         try {
             JsonObject json = JsonParser.parseString(body).getAsJsonObject();
             
-            // FastAPI формат
             if (json.has("detail")) {
-                // Может быть строкой или массивом
                 if (json.get("detail").isJsonArray()) {
                     return json.getAsJsonArray("detail").get(0).getAsJsonObject()
                             .get("msg").getAsString();
                 }
                 return json.get("detail").getAsString();
             }
-            // Наш формат
             if (json.has("error")) {
                 return json.get("error").getAsString();
             }
         } catch (Exception ignored) {}
         
-        // Если не смогли распарсить — возвращаем первые 200 символов
         return body.length() > 200 ? body.substring(0, 200) + "..." : body;
     }
 
@@ -201,7 +207,7 @@ public class AuthManager {
     public static String activatePass(String passCode) {
         try {
             String json = "{\"pass_code\":\"" + passCode.toUpperCase() + "\"}";
-            HttpResponse<String> resp = post("/auth/pass/activate", json);
+            SimpleHttpResponse resp = post("/auth/pass/activate", json);
             
             if (resp.statusCode() == 200) {
                 return "Проходка успешно активирована!";
@@ -238,4 +244,18 @@ public class AuthManager {
         public static AuthResult ok() { return new AuthResult(true, null); }
         public static AuthResult fail(String msg) { return new AuthResult(false, msg); }
     }
+}
+
+// ====================== ВСПОМОГАТЕЛЬНЫЙ КЛАСС ======================
+class SimpleHttpResponse {
+    final int statusCode;
+    final String body;
+    
+    SimpleHttpResponse(int statusCode, String body) {
+        this.statusCode = statusCode;
+        this.body = body;
+    }
+    
+    int statusCode() { return statusCode; }
+    String body() { return body; }
 }
