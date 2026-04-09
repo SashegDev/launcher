@@ -81,13 +81,10 @@ public class LaunchMenu {
     }
 
     private void installServerPack() throws Exception {
-        // Проверяем наличие проходки
-        if (!AuthManager.hasPass()) {
+        if (!AuthManager.canDownloadPacks()) {
             ConsoleUtils.clearScreen();
-            System.out.println(ZAnsi.brightRed("У вас нет активной проходки!"));
-            System.out.println(ZAnsi.white("Чтобы скачивать сборки с сервера ZernMC, необходимо активировать проходку."));
-            System.out.println();
-            System.out.println(ZAnsi.white("Обратитесь к администратору для получения проходки."));
+            System.out.println(ZAnsi.brightRed("У вас нет права на скачивание сборок!"));
+            System.out.println(ZAnsi.white("Для доступа к серверным сборкам необходима активная проходка."));
             ConsoleUtils.pause();
             return;
         }
@@ -514,7 +511,7 @@ public class LaunchMenu {
     }
     
     private void launchExistingInstance(Instance instance) {
-        if (instance.isServerPack() && !AuthManager.hasPass()) {
+        if (instance.isServerPack() && !AuthManager.canDownloadPacks()) {
             ConsoleUtils.clearScreen();
             System.out.println(ZAnsi.brightRed("Для запуска серверной сборки требуется активная проходка!"));
             ConsoleUtils.pause();

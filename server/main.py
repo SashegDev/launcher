@@ -25,7 +25,7 @@ import base64
 from fastapi.responses import StreamingResponse
 
 from auth import get_current_user, router as auth_router, init_db, verify_jwt
-from server.roles import Permissions, has_permission
+from roles import Permissions, has_permission
 
 logger = structlog.get_logger(__name__)
 

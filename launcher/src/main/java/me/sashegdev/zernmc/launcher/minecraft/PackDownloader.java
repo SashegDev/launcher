@@ -43,6 +43,9 @@ public class PackDownloader {
         if (accessToken == null) {
             throw new IOException("Не авторизован. Требуется проходка для просмотра сборок.");
         }
+        if (!AuthManager.canViewPacks()) {
+            throw new IOException("Для просмотра сборок требуется активная проходка");
+        }
 
         // Используем HttpURLConnection для GET с авторизацией
         java.net.HttpURLConnection connection = null;
@@ -90,11 +93,11 @@ public class PackDownloader {
         
         for (JsonElement elem : packsArray) {
             JsonObject pack = elem.getAsJsonObject();
-            
+
             if (pack.has("error") || (pack.has("status") && "not_scanned".equals(pack.get("status").getAsString()))) {
                 continue;
             }
-            
+
             try {
                 String name = pack.get("name").getAsString();
                 int version = pack.has("version") ? pack.get("version").getAsInt() : 0;
@@ -103,7 +106,7 @@ public class PackDownloader {
                 String loaderVersion = pack.has("loader_version") && !pack.get("loader_version").isJsonNull() 
                         ? pack.get("loader_version").getAsString() : "";
                 int filesCount = pack.has("files_count") ? pack.get("files_count").getAsInt() : 0;
-                
+
                 LocalDateTime updatedAt = null;
                 if (pack.has("updated_at") && !pack.get("updated_at").isJsonNull()) {
                     try {
@@ -111,14 +114,14 @@ public class PackDownloader {
                                 DateTimeFormatter.ISO_DATE_TIME);
                     } catch (Exception ignored) {}
                 }
-                
+
                 result.add(new ServerPack(name, version, minecraftVersion, loaderType, 
                         loaderVersion, updatedAt, filesCount));
             } catch (Exception e) {
                 System.err.println("Ошибка парсинга пака: " + e.getMessage());
             }
         }
-        
+
         return result;
     }
 
@@ -313,6 +316,9 @@ public class PackDownloader {
         if (accessToken == null) {
             throw new IOException("Не авторизован. Требуется проходка для скачивания сборок.");
         }
+        if (!AuthManager.canDownloadPacks()) {
+            throw new IOException("Для скачивания сборок требуется активная проходка");
+        }
 
         String url = ZHttpClient.getBaseUrl() + "/pack/" + packName + "/diff";
 
@@ -506,17 +512,6 @@ public class PackDownloader {
             sb.append(String.format("%02x", b));
         }
         return sb.toString();
-    }
-
-    /**
-     * Парсинг даты из строки
-     */
-    private LocalDateTime parseDateTime(String dateTimeStr) {
-        try {
-            return LocalDateTime.parse(dateTimeStr, DATE_FORMATTER);
-        } catch (Exception e) {
-            return null;
-        }
     }
 
     // ====================== Вложенные классы ======================
