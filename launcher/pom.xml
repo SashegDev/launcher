@@ -13,6 +13,9 @@
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.organization.name>ZernMC</project.organization.name>
+        <project.inceptionYear>2026</project.inceptionYear>
+        <project.description>ZernMC Launcher - just a minimalistic launcher by SashegDev</project.description>
         <mainClass>me.sashegdev.zernmc.launcher.Main</mainClass>
     </properties>
 
