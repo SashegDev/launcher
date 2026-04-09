@@ -8,25 +8,33 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+from contextlib import contextmanager
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request, Depends
+from fastapi import APIRouter, HTTPException, Request, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+import re
 
 logger = structlog.get_logger(__name__)
 
 # ====================== КОНФИГ ======================
 AUTH_DB = Path("data/auth.db")
 AUTH_DB.parent.mkdir(exist_ok=True)
-
 SECRET_KEY = Path("data/.secret_key")
+RATE_LIMIT_DB = Path("data/rate_limit.db")
 
-ACCESS_TOKEN_EXPIRE_SECONDS = 24 * 3600      # 24 часа
-REFRESH_TOKEN_EXPIRE_SECONDS = 30 * 86400    # 30 дней
+# Токены
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 часа
+REFRESH_TOKEN_EXPIRE_DAYS = 30
+
+# Лимиты
+MAX_LOGIN_ATTEMPTS = 5
+LOGIN_BLOCK_MINUTES = 15
 
 # ====================== СЕКРЕТНЫЙ КЛЮЧ ======================
 def _get_secret() -> bytes:
+    """Безопасное получение/создание секретного ключа"""
     if SECRET_KEY.exists():
         return SECRET_KEY.read_bytes()
     key = secrets.token_bytes(64)
@@ -36,31 +44,46 @@ def _get_secret() -> bytes:
 
 _SECRET = _get_secret()
 
-def create_jwt(payload: dict) -> str:
+# ====================== JWT ФУНКЦИИ ======================
+def create_jwt(payload: dict, expires_in: int = None) -> str:
+    """Создание JWT токена"""
+    if expires_in is None:
+        expires_in = ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    
+    payload = payload.copy()
+    payload["exp"] = time.time() + expires_in
+    payload["iat"] = time.time()
+    payload["jti"] = secrets.token_hex(16)
+    
     header = base64.urlsafe_b64encode(
         json.dumps({"alg": "HS256", "typ": "JWT"}).encode()
     ).rstrip(b'=').decode()
+    
     body = base64.urlsafe_b64encode(
         json.dumps(payload).encode()
     ).rstrip(b'=').decode()
+    
     msg = f"{header}.{body}".encode()
     sig = hmac.new(_SECRET, msg, hashlib.sha256).digest()
+    
     return f"{header}.{body}.{base64.urlsafe_b64encode(sig).rstrip(b'=').decode()}"
 
 def verify_jwt(token: str) -> Optional[dict]:
+    """Верификация JWT токена"""
     try:
         parts = token.split(".")
         if len(parts) != 3:
             return None
-        header, body, sig = parts
-        msg = f"{header}.{body}".encode()
-        expected = hmac.new(_SECRET, msg, hashlib.sha256).digest()
         
-        # Исправлено: правильный паддинг для base64url
+        header, body, sig = parts
+        
         sig_padded = sig + '=' * (4 - len(sig) % 4)
+        expected_sig = base64.urlsafe_b64decode(sig_padded)
+        
+        msg = f"{header}.{body}".encode()
         if not hmac.compare_digest(
-            base64.urlsafe_b64decode(sig_padded),
-            expected
+            hmac.new(_SECRET, msg, hashlib.sha256).digest(),
+            expected_sig
         ):
             return None
         
@@ -69,75 +92,154 @@ def verify_jwt(token: str) -> Optional[dict]:
         
         if payload.get("exp", 0) < time.time():
             return None
+        
         return payload
     except Exception:
         return None
 
 # ====================== БАЗА ДАННЫХ ======================
+@contextmanager
 def get_db():
-    conn = sqlite3.connect(str(AUTH_DB), check_same_thread=False)
+    """Контекстный менеджер для БД"""
+    conn = sqlite3.connect(str(AUTH_DB), check_same_thread=False, timeout=10)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
-def init_db():
-    conn = get_db()
+def init_rate_limit_db():
+    """Инициализация БД для rate limiting"""
+    conn = sqlite3.connect(str(RATE_LIMIT_DB))
     conn.executescript("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE COLLATE NOCASE,
-            password_hash TEXT NOT NULL,
-            uuid TEXT UNIQUE NOT NULL,
-            created_at REAL NOT NULL,
-            last_login REAL
-        );
-
-        CREATE TABLE IF NOT EXISTS passes (
-            code TEXT PRIMARY KEY,
-            owner TEXT,
-            is_active BOOLEAN DEFAULT 1,
-            activated_by INTEGER REFERENCES users(id),
-            activated_at REAL,
-            expires_at REAL,
-            max_uses INTEGER DEFAULT 1,
-            uses INTEGER DEFAULT 0
-        );
-
-        CREATE TABLE IF NOT EXISTS user_passes (
-            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-            pass_code TEXT REFERENCES passes(code),
-            activated_at REAL NOT NULL,
-            PRIMARY KEY (user_id, pass_code)
-        );
-                       
-        CREATE TABLE IF NOT EXISTS refresh_tokens (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            token_hash TEXT NOT NULL,
-            expires_at REAL NOT NULL
+        CREATE TABLE IF NOT EXISTS login_attempts (
+            ip TEXT PRIMARY KEY,
+            attempts INTEGER DEFAULT 1,
+            first_attempt REAL NOT NULL,
+            last_attempt REAL NOT NULL,
+            blocked_until REAL
         );
     """)
     conn.commit()
     conn.close()
+
+def init_db():
+    """Инициализация основной БД"""
+    with get_db() as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE COLLATE NOCASE,
+                password_hash TEXT NOT NULL,
+                uuid TEXT UNIQUE NOT NULL,
+                role INTEGER DEFAULT 0,
+                created_at REAL NOT NULL,
+                last_login REAL,
+                is_active BOOLEAN DEFAULT 1,
+                banned_until REAL
+            );
+
+            CREATE TABLE IF NOT EXISTS refresh_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token_hash TEXT NOT NULL,
+                jti TEXT NOT NULL,
+                expires_at REAL NOT NULL,
+                revoked BOOLEAN DEFAULT 0,
+                created_at REAL NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS user_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                session_token TEXT UNIQUE NOT NULL,
+                ip_address TEXT,
+                user_agent TEXT,
+                created_at REAL NOT NULL,
+                expires_at REAL NOT NULL,
+                is_active BOOLEAN DEFAULT 1
+            );
+
+            CREATE TABLE IF NOT EXISTS passes (
+                code TEXT PRIMARY KEY,
+                owner TEXT,
+                is_active BOOLEAN DEFAULT 1,
+                activated_by INTEGER REFERENCES users(id),
+                activated_at REAL,
+                expires_at REAL,
+                max_uses INTEGER DEFAULT 1,
+                uses INTEGER DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS user_passes (
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                pass_code TEXT REFERENCES passes(code),
+                activated_at REAL NOT NULL,
+                PRIMARY KEY (user_id, pass_code)
+            );
+
+            CREATE TABLE IF NOT EXISTS pass_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                requester_id INTEGER NOT NULL REFERENCES users(id),
+                target_username TEXT NOT NULL,
+                reason TEXT,
+                status TEXT DEFAULT 'pending',
+                decision_reason TEXT,
+                created_at REAL NOT NULL,
+                reviewed_by INTEGER REFERENCES users(id),
+                reviewed_at REAL
+            );
+
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER REFERENCES users(id),
+                action TEXT NOT NULL,
+                details TEXT,
+                ip_address TEXT,
+                timestamp REAL NOT NULL
+            );
+            
+            CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id);
+            CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_sessions_user ON user_sessions(user_id);
+            CREATE INDEX IF NOT EXISTS idx_refresh_user ON refresh_tokens(user_id);
+        """)
+        
+        # Добавляем колонку role если её нет
+        cursor = conn.execute("PRAGMA table_info(users)")
+        columns = [col[1] for col in cursor.fetchall()]
+        
+        if "role" not in columns:
+            conn.execute("ALTER TABLE users ADD COLUMN role INTEGER DEFAULT 0")
+            logger.info("Added role column to users table")
+    
+    init_rate_limit_db()
     logger.info("Auth database initialized")
 
 # ====================== ХЕЛПЕРЫ ======================
 def hash_password(password: str) -> str:
-    salt = secrets.token_hex(16)
+    """Хэширование пароля"""
+    salt = secrets.token_hex(32)
     hash_obj = hashlib.pbkdf2_hmac(
         'sha256',
-        password.encode(),
-        salt.encode(),
+        password.encode('utf-8'),
+        salt.encode('utf-8'),
         300000
     )
     return f"{salt}${hash_obj.hex()}"
 
 def verify_password(password: str, stored: str) -> bool:
+    """Верификация пароля"""
     try:
         salt, stored_hash = stored.split('$')
         hash_obj = hashlib.pbkdf2_hmac(
             'sha256',
-            password.encode(),
-            salt.encode(),
+            password.encode('utf-8'),
+            salt.encode('utf-8'),
             300000
         )
         return hmac.compare_digest(hash_obj.hex(), stored_hash)
@@ -145,283 +247,374 @@ def verify_password(password: str, stored: str) -> bool:
         return False
 
 def generate_uuid() -> str:
+    """Генерация UUID"""
     return f"{secrets.token_hex(4)}-{secrets.token_hex(2)}-{secrets.token_hex(2)}-{secrets.token_hex(2)}-{secrets.token_hex(6)}"
+
+def check_rate_limit(ip: str) -> tuple[bool, Optional[int]]:
+    """Проверка rate limiting"""
+    conn = sqlite3.connect(str(RATE_LIMIT_DB))
+    now = time.time()
+    
+    try:
+        row = conn.execute(
+            "SELECT attempts, blocked_until FROM login_attempts WHERE ip = ?",
+            (ip,)
+        ).fetchone()
+        
+        if row:
+            blocked_until = row[1]
+            if blocked_until and blocked_until > now:
+                return False, int(blocked_until - now)
+            
+            if row[0] >= MAX_LOGIN_ATTEMPTS:
+                blocked_until = now + (LOGIN_BLOCK_MINUTES * 60)
+                conn.execute(
+                    "UPDATE login_attempts SET blocked_until = ? WHERE ip = ?",
+                    (blocked_until, ip)
+                )
+                conn.commit()
+                return False, LOGIN_BLOCK_MINUTES * 60
+        return True, None
+    finally:
+        conn.close()
+
+def record_login_attempt(ip: str, success: bool):
+    """Запись попытки входа"""
+    conn = sqlite3.connect(str(RATE_LIMIT_DB))
+    now = time.time()
+    
+    try:
+        if success:
+            conn.execute("DELETE FROM login_attempts WHERE ip = ?", (ip,))
+        else:
+            conn.execute("""
+                INSERT INTO login_attempts (ip, attempts, first_attempt, last_attempt)
+                VALUES (?, 1, ?, ?)
+                ON CONFLICT(ip) DO UPDATE SET
+                    attempts = attempts + 1,
+                    last_attempt = ?
+            """, (ip, now, now, now))
+        conn.commit()
+    finally:
+        conn.close()
+
+def log_audit(user_id: int, action: str, details: str, ip_address: str):
+    """Логирование действий"""
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO audit_log (user_id, action, details, ip_address, timestamp) VALUES (?, ?, ?, ?, ?)",
+            (user_id, action, details, ip_address, time.time())
+        )
 
 # ====================== МОДЕЛИ ======================
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(..., min_length=3, max_length=32)
+    password: str = Field(..., min_length=6, max_length=128)
+    
+    @field_validator('username')
+    def validate_username(cls, v):
+        if not re.match(r'^[a-zA-Z0-9_]+$', v):
+            raise ValueError('Имя пользователя может содержать только буквы, цифры и подчеркивания')
+        return v.lower()
 
 class RegisterRequest(BaseModel):
-    username: str = Field(..., min_length=3, max_length=16, pattern=r"^[a-zA-Z0-9_]+$")
+    username: str = Field(..., min_length=3, max_length=32)
     password: str = Field(..., min_length=6, max_length=128)
+    
+    @field_validator('username')
+    def validate_username(cls, v):
+        if not re.match(r'^[a-zA-Z0-9_]+$', v):
+            raise ValueError('Имя пользователя может содержать только буквы, цифры и подчеркивания')
+        return v.lower()
 
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     expires_in: int
+    token_type: str = "bearer"
     username: str
     uuid: str
+    role: int
+    role_name: str
 
-# ====================== ROUTER ======================
+# ====================== DEPENDENCIES ======================
 router = APIRouter(prefix="/auth", tags=["auth"])
 bearer = HTTPBearer(auto_error=False)
 
-def _issue_tokens(conn, user_id: int, username: str, uuid: str) -> TokenResponse:
-    now = time.time()
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    request: Request = None
+) -> dict:
+    """Получение текущего пользователя"""
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Не авторизован",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    payload = verify_jwt(credentials.credentials)
+    if not payload or payload.get("type") != "access":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Недействительный токен"
+        )
+    
+    with get_db() as conn:
+        user = conn.execute(
+            "SELECT id, username, uuid, role, is_active, banned_until FROM users WHERE id = ?",
+            (payload["sub"],)
+        ).fetchone()
+        
+        if not user:
+            raise HTTPException(401, "Пользователь не найден")
+        
+        if not user["is_active"]:
+            raise HTTPException(403, "Аккаунт деактивирован")
+        
+        if user["banned_until"] and user["banned_until"] > time.time():
+            raise HTTPException(403, "Аккаунт забанен")
+        
+        return {
+            "id": user["id"],
+            "username": user["username"],
+            "uuid": user["uuid"],
+            "role": user["role"]
+        }
 
-    access_token = create_jwt({
-        "sub": user_id,
-        "username": username,
-        "uuid": uuid,
-        "type": "access",
-        "exp": now + ACCESS_TOKEN_EXPIRE_SECONDS
-    })
+def require_role(min_role: int):
+    """Декоратор для проверки роли"""
+    async def dependency(current_user: dict = Depends(get_current_user)):
+        if current_user["role"] < min_role:
+            from roles import ROLE_NAMES
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Требуется роль {ROLE_NAMES.get(min_role, 'неизвестная')}"
+            )
+        return current_user
+    return dependency
 
-    refresh_token = create_jwt({
-        "sub": user_id,
-        "type": "refresh",
-        "exp": now + REFRESH_TOKEN_EXPIRE_SECONDS
-    })
-
-    token_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
-
-    conn.execute("DELETE FROM refresh_tokens WHERE user_id = ?", (user_id,))
-    conn.execute(
-        "INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)",
-        (user_id, token_hash, now + REFRESH_TOKEN_EXPIRE_SECONDS)
-    )
-    conn.commit()
-
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        expires_in=ACCESS_TOKEN_EXPIRE_SECONDS,
-        username=username,
-        uuid=uuid
-    )
-
+# ====================== ЭНДПОИНТЫ ======================
 @router.post("/register", response_model=TokenResponse)
 async def register(body: RegisterRequest, request: Request):
-    conn = get_db()
-    try:
+    """Регистрация нового пользователя"""
+    ip = request.client.host if request.client else "unknown"
+    
+    allowed, wait = check_rate_limit(ip)
+    if not allowed:
+        raise HTTPException(429, f"Слишком много попыток. Подождите {wait} секунд")
+    
+    with get_db() as conn:
         existing = conn.execute(
-            "SELECT 1 FROM users WHERE username = ? COLLATE NOCASE",
+            "SELECT username FROM users WHERE username = ?",
             (body.username,)
         ).fetchone()
         
         if existing:
-            raise HTTPException(status_code=409, detail="Имя пользователя уже занято")
-
+            raise HTTPException(409, "Пользователь с таким именем уже существует")
+        
         uuid = generate_uuid()
         pw_hash = hash_password(body.password)
         now = time.time()
-
+        
         cursor = conn.execute(
-            "INSERT INTO users (username, password_hash, uuid, created_at) VALUES (?, ?, ?, ?)",
-            (body.username, pw_hash, uuid, now)
+            """INSERT INTO users (username, password_hash, uuid, created_at, role) 
+               VALUES (?, ?, ?, ?, ?)""",
+            (body.username, pw_hash, uuid, now, 0)  # role 0 = обычный пользователь
         )
-        conn.commit()
         
         user_id = cursor.lastrowid
-        tokens = _issue_tokens(conn, user_id, body.username, uuid)
         
-        logger.info("User registered", username=body.username, user_id=user_id)
-        return tokens
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Register error", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-    finally:
-        conn.close()
+        # Создаем сессию
+        session_token = secrets.token_urlsafe(32)
+        conn.execute(
+            "INSERT INTO user_sessions (user_id, session_token, ip_address, user_agent, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, session_token, ip, request.headers.get("user-agent", ""), now, now + (ACCESS_TOKEN_EXPIRE_MINUTES * 60))
+        )
+        
+        # Токены
+        access_token = create_jwt({
+            "sub": user_id,
+            "username": body.username,
+            "uuid": uuid,
+            "role": 0,
+            "type": "access",
+            "jti": session_token
+        })
+        
+        refresh_token = create_jwt({
+            "sub": user_id,
+            "type": "refresh",
+            "jti": secrets.token_hex(16)
+        }, expires_in=REFRESH_TOKEN_EXPIRE_DAYS * 86400)
+        
+        refresh_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
+        conn.execute(
+            "INSERT INTO refresh_tokens (user_id, token_hash, jti, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
+            (user_id, refresh_hash, secrets.token_hex(16), now + (REFRESH_TOKEN_EXPIRE_DAYS * 86400), now)
+        )
+        
+        log_audit(user_id, "register", f"User registered from {ip}", ip)
+        logger.info("User registered", username=body.username, user_id=user_id, ip=ip)
+        
+        from roles import ROLE_NAMES
+        return TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            username=body.username,
+            uuid=uuid,
+            role=0,
+            role_name=ROLE_NAMES[0]
+        )
 
 @router.post("/login", response_model=TokenResponse)
 async def login(body: LoginRequest, request: Request):
-    conn = get_db()
-    try:
-        row = conn.execute(
-            "SELECT id, username, password_hash, uuid FROM users WHERE username = ? COLLATE NOCASE",
+    """Вход в систему"""
+    ip = request.client.host if request.client else "unknown"
+    
+    allowed, wait = check_rate_limit(ip)
+    if not allowed:
+        raise HTTPException(429, f"Слишком много попыток. Подождите {wait} секунд")
+    
+    with get_db() as conn:
+        user = conn.execute(
+            "SELECT id, username, uuid, password_hash, role, is_active, banned_until FROM users WHERE username = ?",
             (body.username,)
         ).fetchone()
-
-        if not row or not verify_password(body.password, row["password_hash"]):
+        
+        if not user or not verify_password(body.password, user["password_hash"]):
+            record_login_attempt(ip, False)
+            log_audit(0, "login_failed", f"Failed login for {body.username} from {ip}", ip)
             raise HTTPException(401, "Неверное имя пользователя или пароль")
-
+        
+        if not user["is_active"]:
+            raise HTTPException(403, "Аккаунт деактивирован")
+        
+        if user["banned_until"] and user["banned_until"] > time.time():
+            raise HTTPException(403, "Аккаунт забанен")
+        
+        record_login_attempt(ip, True)
+        
+        now = time.time()
         conn.execute(
             "UPDATE users SET last_login = ? WHERE id = ?",
-            (time.time(), row["id"])
+            (now, user["id"])
         )
-        conn.commit()
+        
+        # Создаем сессию
+        session_token = secrets.token_urlsafe(32)
+        conn.execute(
+            "INSERT INTO user_sessions (user_id, session_token, ip_address, user_agent, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (user["id"], session_token, ip, request.headers.get("user-agent", ""), now, now + (ACCESS_TOKEN_EXPIRE_MINUTES * 60))
+        )
+        
+        access_token = create_jwt({
+            "sub": user["id"],
+            "username": user["username"],
+            "uuid": user["uuid"],
+            "role": user["role"],
+            "type": "access",
+            "jti": session_token
+        })
+        
+        refresh_token = create_jwt({
+            "sub": user["id"],
+            "type": "refresh",
+            "jti": secrets.token_hex(16)
+        }, expires_in=REFRESH_TOKEN_EXPIRE_DAYS * 86400)
+        
+        refresh_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
+        conn.execute(
+            "INSERT INTO refresh_tokens (user_id, token_hash, jti, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
+            (user["id"], refresh_hash, secrets.token_hex(16), now + (REFRESH_TOKEN_EXPIRE_DAYS * 86400), now)
+        )
+        
+        log_audit(user["id"], "login", f"User logged in from {ip}", ip)
+        logger.info("User logged in", username=user["username"], user_id=user["id"], ip=ip)
+        
+        from roles import ROLE_NAMES
+        return TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            username=user["username"],
+            uuid=user["uuid"],
+            role=user["role"],
+            role_name=ROLE_NAMES.get(user["role"], "Неизвестно")
+        )
 
-        logger.info("User logged in", username=body.username, user_id=row["id"])
-        return _issue_tokens(conn, row["id"], row["username"], row["uuid"])
-    finally:
-        conn.close()
+@router.post("/logout")
+async def logout(current_user: dict = Depends(get_current_user), request: Request = None):
+    """Выход из системы"""
+    ip = request.client.host if request.client else "unknown"
+    
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE user_sessions SET is_active = 0 WHERE user_id = ?",
+            (current_user["id"],)
+        )
+        conn.execute(
+            "UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?",
+            (current_user["id"],)
+        )
+        
+        log_audit(current_user["id"], "logout", f"User logged out from {ip}", ip)
+    
+    logger.info("User logged out", user_id=current_user["id"], ip=ip)
+    return {"success": True}
 
 @router.post("/refresh")
-async def refresh(body: dict):
+async def refresh(body: dict, request: Request):
+    """Обновление access токена"""
     refresh_token = body.get("refresh_token")
     if not refresh_token:
         raise HTTPException(400, "refresh_token обязателен")
-
+    
     payload = verify_jwt(refresh_token)
     if not payload or payload.get("type") != "refresh":
         raise HTTPException(401, "Недействительный refresh token")
-
-    conn = get_db()
-    try:
+    
+    ip = request.client.host if request.client else "unknown"
+    
+    with get_db() as conn:
         token_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
-        row = conn.execute(
-            "SELECT user_id FROM refresh_tokens WHERE token_hash = ? AND expires_at > ?",
+        token_row = conn.execute(
+            "SELECT user_id, revoked FROM refresh_tokens WHERE token_hash = ? AND expires_at > ?",
             (token_hash, time.time())
         ).fetchone()
-
-        if not row:
+        
+        if not token_row or token_row["revoked"]:
             raise HTTPException(401, "Refresh token истёк или недействителен")
-
-        user_row = conn.execute(
-            "SELECT id, username, uuid FROM users WHERE id = ?",
-            (row["user_id"],)
+        
+        user = conn.execute(
+            "SELECT id, username, uuid, role FROM users WHERE id = ? AND is_active = 1",
+            (token_row["user_id"],)
         ).fetchone()
-
-        if not user_row:
-            raise HTTPException(401, "Пользователь не найден")
-
-        return _issue_tokens(conn, user_row["id"], user_row["username"], user_row["uuid"])
-    finally:
-        conn.close()
-
-@router.post("/logout")
-async def logout(body: dict):
-    refresh_token = body.get("refresh_token")
-    if refresh_token:
-        conn = get_db()
-        try:
-            token_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
-            conn.execute(
-                "DELETE FROM refresh_tokens WHERE token_hash = ?",
-                (token_hash,)
-            )
-            conn.commit()
-        finally:
-            conn.close()
-    return {"success": True}
-
-# ====================== ПРОХОДКИ ======================
-
-class ActivatePassRequest(BaseModel):
-    pass_code: str = Field(..., min_length=8, max_length=20)
-
-@router.post("/pass/activate")
-async def activate_pass_endpoint(
-    body: ActivatePassRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(bearer)
-):
-    if not credentials:
-        raise HTTPException(401, "Требуется авторизация")
-
-    payload = verify_jwt(credentials.credentials)
-    if not payload or payload.get("type") != "access":
-        raise HTTPException(401, "Недействительный токен")
-
-    user_id = payload["sub"]
-    username = payload["username"]
-    pass_code = body.pass_code.upper().strip()
-
-    conn = get_db()
-    try:
-        pass_row = conn.execute(
-            "SELECT code, expires_at, uses, max_uses, owner FROM passes WHERE code = ?",
-            (pass_code,)
-        ).fetchone()
-
-        if not pass_row:
-            raise HTTPException(404, "Проходка не найдена")
-
-        # Проверка срока
-        if pass_row["expires_at"] and pass_row["expires_at"] < time.time():
-            raise HTTPException(410, "Проходка истекла")
-
-        # Проверка лимита использований
-        if pass_row["uses"] >= pass_row["max_uses"]:
-            raise HTTPException(410, "Проходка уже использована")
-
-        # Проверка владельца
-        if pass_row["owner"] is not None:
-            if pass_row["owner"] != username:
-                raise HTTPException(409, "Проходка уже активирована другим пользователем")
-            
-            # Уже активирована этим пользователем
-            return {"success": True, "message": "Проходка уже активирована на вашем аккаунте"}
-
+        
+        if not user:
+            raise HTTPException(401, "Пользователь не найден или заблокирован")
+        
         now = time.time()
-
-        # Активация
+        session_token = secrets.token_urlsafe(32)
         conn.execute(
-            "INSERT INTO user_passes (user_id, pass_code, activated_at) VALUES (?, ?, ?)",
-            (user_id, pass_code, now)
+            "INSERT INTO user_sessions (user_id, session_token, ip_address, user_agent, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (user["id"], session_token, ip, request.headers.get("user-agent", ""), now, now + (ACCESS_TOKEN_EXPIRE_MINUTES * 60))
         )
-
-        conn.execute(
-            """UPDATE passes 
-               SET uses = uses + 1, 
-                   owner = ?, 
-                   activated_by = ?, 
-                   activated_at = ? 
-               WHERE code = ?""",
-            (username, user_id, now, pass_code)
-        )
-
-        conn.commit()
-
-        logger.info("Pass activated", user_id=user_id, username=username, pass_code=pass_code)
-        return {"success": True, "message": "Проходка успешно активирована!"}
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Pass activation error", exc_info=True)
-        raise HTTPException(500, f"Ошибка сервера: {str(e)}")
-    finally:
-        conn.close()
-
-@router.get("/pass/my")
-async def get_my_passes(credentials: HTTPAuthorizationCredentials = Depends(bearer)):
-    if not credentials:
-        raise HTTPException(401, "Требуется авторизация")
-
-    payload = verify_jwt(credentials.credentials)
-    if not payload:
-        raise HTTPException(401, "Недействительный токен")
-
-    user_id = payload["sub"]
-
-    conn = get_db()
-    try:
-        rows = conn.execute("""
-            SELECT p.code, p.expires_at, p.is_active, up.activated_at
-            FROM user_passes up
-            JOIN passes p ON up.pass_code = p.code
-            WHERE up.user_id = ?
-        """, (user_id,)).fetchall()
-
-        passes = []
-        now = time.time()
-        for row in rows:
-            expires = row["expires_at"]
-            is_active = row["is_active"] and (expires is None or expires > now)
-            passes.append({
-                "code": row["code"],
-                "activated_at": row["activated_at"],
-                "expires_at": expires,
-                "is_active": is_active
-            })
-
+        
+        new_access_token = create_jwt({
+            "sub": user["id"],
+            "username": user["username"],
+            "uuid": user["uuid"],
+            "role": user["role"],
+            "type": "access",
+            "jti": session_token
+        })
+        
+        log_audit(user["id"], "refresh_token", f"Token refreshed from {ip}", ip)
+        
         return {
-            "passes": passes,
-            "has_active": any(p["is_active"] for p in passes)
+            "access_token": new_access_token,
+            "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            "token_type": "bearer"
         }
-    finally:
-        conn.close()

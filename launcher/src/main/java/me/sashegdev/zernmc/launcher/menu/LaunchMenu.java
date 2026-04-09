@@ -81,30 +81,15 @@ public class LaunchMenu {
     }
 
     private void installServerPack() throws Exception {
-        if (!AuthManager.hasActivePass()) {
+        // Проверяем наличие проходки
+        if (!AuthManager.hasPass()) {
             ConsoleUtils.clearScreen();
             System.out.println(ZAnsi.brightRed("У вас нет активной проходки!"));
             System.out.println(ZAnsi.white("Чтобы скачивать сборки с сервера ZernMC, необходимо активировать проходку."));
             System.out.println();
-            System.out.print(ZAnsi.white("Введите код проходки (ZERN-XXXXXXX) или Enter для отмены: "));
-
-            String code = Input.readLine();
-            if (code.isEmpty()) return;
-
-            String result = AuthManager.activatePass(code);
-            System.out.println(ZAnsi.cyan(result));
-
-            if (!result.contains("успешно")) {
-                ConsoleUtils.pause();
-                return;
-            }
-
-            // Повторная проверка
-            if (!AuthManager.hasActivePass()) {
-                System.out.println(ZAnsi.brightRed("Не удалось активировать проходку."));
-                ConsoleUtils.pause();
-                return;
-            }
+            System.out.println(ZAnsi.white("Обратитесь к администратору для получения проходки."));
+            ConsoleUtils.pause();
+            return;
         }
 
         ConsoleUtils.clearScreen();
@@ -529,7 +514,7 @@ public class LaunchMenu {
     }
     
     private void launchExistingInstance(Instance instance) {
-        if (instance.isServerPack() && !AuthManager.hasActivePass()) {
+        if (instance.isServerPack() && !AuthManager.hasPass()) {
             ConsoleUtils.clearScreen();
             System.out.println(ZAnsi.brightRed("Для запуска серверной сборки требуется активная проходка!"));
             ConsoleUtils.pause();

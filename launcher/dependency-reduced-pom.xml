@@ -56,7 +56,7 @@
               <versionInfo>
                 <fileVersion>${project.version}.0</fileVersion>
                 <txtFileVersion>${project.version}</txtFileVersion>
-                <fileDescription>ZernMC Launcher — самописный Minecraft лаунчер</fileDescription>
+                <fileDescription>ZernMC Launcher — A Little Minecraft Launcher</fileDescription>
                 <productVersion>${project.version}.0</productVersion>
                 <txtProductVersion>${project.version}</txtProductVersion>
                 <productName>ZernMC Launcher</productName>
