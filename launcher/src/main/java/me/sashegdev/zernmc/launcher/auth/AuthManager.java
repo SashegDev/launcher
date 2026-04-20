@@ -203,31 +203,23 @@ public class AuthManager {
         if (!isLoggedIn()) return false;
         try {
             String response = ZHttpClient.get("/auth/pass/my");
-            return response.contains("\"is_active\":true");
+            JsonObject json = JsonParser.parseString(response).getAsJsonObject();
+            return json.has("has_active") && json.get("has_active").getAsBoolean();
         } catch (Exception e) {
-            System.err.println("Не удалось проверить проходки: " + e.getMessage());
+            System.err.println(ZAnsi.red("Не удалось проверить проходки: ") + e.getMessage());
             return false;
         }
     }
     
-    public static String activatePass(String passCode) {
+    public static String getPassStatus() {
+        if (!isLoggedIn()) return "Не авторизован";
         try {
-            String json = "{\"pass_code\":\"" + passCode.toUpperCase() + "\"}";
-            SimpleHttpResponse resp = post("/auth/pass/activate", json);
-
-            System.out.println(ZAnsi.cyan("[AUTH] Активация проходки: HTTP " + resp.statusCode()));
-
-            if (resp.statusCode() == 200) {
-                return "Проходка успешно активирована!";
-            } else if (resp.statusCode() == 401) {
-                return "Ошибка: Требуется авторизация. Перезайдите в аккаунт.";
-            } else {
-                String error = extractError(resp.body());
-                return "Ошибка: " + error;
-            }
+            String response = ZHttpClient.get("/auth/pass/my");
+            JsonObject json = JsonParser.parseString(response).getAsJsonObject();
+            boolean hasActive = json.has("has_active") && json.get("has_active").getAsBoolean();
+            return hasActive ? "Есть активная проходка" : "Проходка отсутствует";
         } catch (Exception e) {
-            e.printStackTrace();
-            return "Ошибка соединения: " + e.getMessage();
+            return "Ошибка проверки";
         }
     }
 

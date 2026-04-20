@@ -4,7 +4,6 @@ import me.sashegdev.zernmc.launcher.auth.AuthManager;
 import me.sashegdev.zernmc.launcher.menu.*;
 import me.sashegdev.zernmc.launcher.ui.ArrowMenu;
 import me.sashegdev.zernmc.launcher.utils.*;
-
 import java.io.IOException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -23,13 +22,12 @@ public class Main {
         System.setProperty("file.encoding", "UTF-8");
         System.setProperty("sun.err.encoding", "UTF-8");
         System.setProperty("sun.stdout.encoding", "UTF-8");
-        java.nio.charset.Charset.defaultCharset();
-        ZAnsi.install();
 
+        ZAnsi.install();
         System.out.print("\033[H\033[2J");
         System.out.println(ZAnsi.brightGreen("Добро пожаловать в ZernMC Launcher " + CURRENT_VERSION));
 
-        //проверка всех сервисов при старте
+        // Проверка всех сервисов при старте
         ZHttpClient.checkAllServicesOnStartup();
 
         checkAndAutoUpdateLauncher();
@@ -49,8 +47,8 @@ public class Main {
         } else {
             System.out.println(ZAnsi.brightGreen("Добро пожаловать обратно, " + AuthManager.getUsername() + "!"));
         }
-        // === КОНЕЦ АВТОРИЗАЦИИ ===
 
+        // === ГЛАВНЫЙ ЦИКЛ ===
         try {
             mainLoop();
         } catch (Exception e) {
@@ -63,7 +61,6 @@ public class Main {
 
     private static void checkAndAutoUpdateLauncher() {
         System.out.println(ZAnsi.cyan("Проверка обновлений лаунчера..."));
-
         try {
             String json = ZHttpClient.getLauncherVersionInfo();
             String serverVersion = extractVersion(json);
@@ -74,13 +71,11 @@ public class Main {
             if (Version.isNewer(CURRENT_VERSION, serverVersion)) {
                 System.out.println(ZAnsi.brightYellow("\nДоступна новая версия лаунчера! (" + serverVersion + ")"));
                 System.out.println(ZAnsi.cyan("Начинается автоматическое обновление...\n"));
-
                 performAutoUpdate(serverVersion);
                 restartLauncher();
             } else {
                 System.out.println(ZAnsi.brightGreen("Лаунчер актуален."));
             }
-
         } catch (Exception e) {
             System.out.println(ZAnsi.yellow("Не удалось проверить обновления лаунчера."));
             System.out.println(ZAnsi.white("Ошибка: ") + e.getMessage());
@@ -109,9 +104,7 @@ public class Main {
         long size = Files.size(tempJar);
         System.out.println(ZAnsi.brightGreen("Скачано успешно (" + (size / 1024) + " KB)"));
 
-        // Заменяем текущий jar
         Files.move(tempJar, currentJar, StandardCopyOption.REPLACE_EXISTING);
-
         System.out.println(ZAnsi.brightGreen("Обновление успешно установлено!"));
     }
 
@@ -152,27 +145,73 @@ public class Main {
         }
     }
 
+    // ====================== ГЛАВНЫЙ ЦИКЛ ======================
     private static void mainLoop() throws Exception {
+        if (Config.isZernMCBuild()) {
+            zernMCFlow();
+        } else {
+            globalFlow();
+        }
+    }
+
+    // ====================== ZERNMC FLOW ======================
+    private static void zernMCFlow() throws Exception {
+        ConsoleUtils.clearScreen();
+        System.out.println(ZAnsi.header("=== ZernMC Private Launcher ==="));
+
+        // 1. Проверка подключения к серверу
+        System.out.println(ZAnsi.cyan("Проверка подключения к ZernMC серверу..."));
+        try {
+            String response = ZHttpClient.get("/health");
+            System.out.println(ZAnsi.brightGreen("✓ Сервер доступен"));
+        } catch (Exception e) {
+            System.out.println(ZAnsi.brightRed("✗ Не удалось подключиться к ZernMC серверу"));
+            System.out.println(ZAnsi.white("Ошибка: " + e.getMessage()));
+            ConsoleUtils.pause();
+            System.exit(1);
+        }
+
+        // 2. Авторизация
+        boolean sessionRestored = AuthManager.loadSavedSession();
+        if (!sessionRestored) {
+            LoginMenu loginMenu = new LoginMenu();
+            boolean loggedIn = loginMenu.show();
+            if (!loggedIn) {
+                System.exit(0);
+            }
+        } else {
+            System.out.println(ZAnsi.brightGreen("Добро пожаловать обратно, " + AuthManager.getUsername() + "!"));
+        }
+
+        // 3. Запуск меню (LaunchMenu сам определит режим и вызовет нужный flow)
+        LaunchMenu launchMenu = new LaunchMenu();
+        launchMenu.show();   // ← Здесь будет вызван showZernMCOnly() внутри
+    }
+
+    // ====================== GLOBAL FLOW ======================
+    private static void globalFlow() throws Exception {
         while (true) {
+            ConsoleUtils.clearScreen();
+            System.out.println(ZAnsi.header("=== ZernMC Launcher ==="));
+
             List<String> options = List.of(
-                "Запустить игру",
-                "Проверка обновлений",
-                "Настройки",
-                "Проверка подключения к серверам Zern",
-                "Выход"
+                    "Запустить игру",
+                    "Проверка обновлений",
+                    "Настройки",
+                    "Проверка подключения к серверам",
+                    "Выход"
             );
 
             ArrowMenu menu = new ArrowMenu("Главное меню", options);
             int choice = menu.show();
 
             if (choice == -1 || choice == 4) {
-                System.out.print("\033[H\033[2J");
                 System.out.println(ZAnsi.yellow("До свидания!"));
                 break;
             }
 
             switch (choice) {
-                case 0 -> new LaunchMenu().show();
+                case 0 -> new LaunchMenu().show();        // обычный LaunchMenu
                 case 1 -> new UpdateMenu().show();
                 case 2 -> new SettingsMenu().show();
                 case 3 -> new ServerCheckMenu().show();

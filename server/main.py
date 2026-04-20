@@ -15,6 +15,8 @@ from middleware import LoggingMiddleware
 from cli import parse_args, run_test_mode, run_production_mode, run_development_mode
 from log_manager import init_logging
 
+from fastapi.responses import Response
+
 import httpx
 import base64
 from fastapi.responses import StreamingResponse
@@ -80,6 +82,331 @@ async def lifespan(app: FastAPI):
     logger.info("Server shutting down...")
 
 
+
+# ====================== ШАБЛОН СТРАНИЦЫ АКТИВАЦИИ ======================
+ACTIVATE_PASS_HTML = """
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Активация проходки | ZernMC</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 450px;
+            width: 100%;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .logo {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .logo h1 {
+            color: #00d4ff;
+            font-size: 32px;
+            font-weight: 700;
+            text-shadow: 0 0 20px rgba(0, 212, 255, 0.5);
+        }
+        
+        .logo p {
+            color: #8892b0;
+            margin-top: 8px;
+        }
+        
+        .form-group {
+            margin-bottom: 24px;
+        }
+        
+        label {
+            display: block;
+            color: #ccd6f6;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+        
+        input {
+            width: 100%;
+            padding: 14px 16px;
+            background: rgba(255, 255, 255, 0.07);
+            border: 1.5px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            color: #ffffff;
+            font-size: 16px;
+            transition: all 0.3s ease;
+            outline: none;
+        }
+        
+        input:focus {
+            border-color: #00d4ff;
+            background: rgba(255, 255, 255, 0.1);
+            box-shadow: 0 0 0 4px rgba(0, 212, 255, 0.1);
+        }
+        
+        input::placeholder {
+            color: #8892b0;
+            opacity: 0.6;
+        }
+        
+        button {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%);
+            border: none;
+            border-radius: 12px;
+            color: white;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 10px;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px -5px rgba(0, 212, 255, 0.4);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        #message {
+            margin-top: 20px;
+            padding: 14px;
+            border-radius: 12px;
+            display: none;
+            animation: fadeIn 0.3s ease;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .success {
+            background: rgba(0, 255, 100, 0.15);
+            border: 1px solid rgba(0, 255, 100, 0.3);
+            color: #00ff64;
+        }
+        
+        .error {
+            background: rgba(255, 50, 50, 0.15);
+            border: 1px solid rgba(255, 50, 50, 0.3);
+            color: #ff5050;
+        }
+        
+        .info {
+            background: rgba(0, 212, 255, 0.15);
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            color: #00d4ff;
+        }
+        
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 0.6s linear infinite;
+            margin-left: 8px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .footer {
+            text-align: center;
+            margin-top: 24px;
+            color: #8892b0;
+            font-size: 14px;
+        }
+        
+        .footer a {
+            color: #00d4ff;
+            text-decoration: none;
+        }
+        
+        .footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <h1>ZernMC</h1>
+            <p>Активация проходки</p>
+        </div>
+        
+        <form id="activateForm">
+            <div class="form-group">
+                <label for="username">Ваш никнейм</label>
+                <input 
+                    type="text" 
+                    id="username" 
+                    name="username" 
+                    placeholder="Введите ваш ник в игре"
+                    required
+                    minlength="3"
+                    maxlength="16"
+                    pattern="[a-zA-Z0-9_]+"
+                    autocomplete="off"
+                >
+            </div>
+            
+            <div class="form-group">
+                <label for="passCode">Код проходки</label>
+                <input 
+                    type="text" 
+                    id="passCode" 
+                    name="passCode" 
+                    placeholder="XXXX-XXXX-XXXX"
+                    required
+                    minlength="8"
+                    maxlength="20"
+                    autocomplete="off"
+                    style="text-transform: uppercase;"
+                >
+            </div>
+            
+            <button type="submit" id="submitBtn">
+                Активировать проходку
+            </button>
+        </form>
+        
+        <div id="message"></div>
+        
+        <div class="footer">
+            <p>Нет проходки? <a href="https://zernmc.ru" target="_blank">Получить на сайте</a></p>
+        </div>
+    </div>
+    
+    <script>
+        const form = document.getElementById('activateForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const messageDiv = document.getElementById('message');
+        const usernameInput = document.getElementById('username');
+        const passCodeInput = document.getElementById('passCode');
+        
+        passCodeInput.addEventListener('input', (e) => {
+            e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '');
+        });
+        
+        function showMessage(text, type) {
+            messageDiv.textContent = text;
+            messageDiv.className = '';
+            messageDiv.classList.add(type);
+            messageDiv.style.display = 'block';
+            
+            if (type === 'success' || type === 'info') {
+                setTimeout(() => {
+                    messageDiv.style.display = 'none';
+                }, 5000);
+            }
+        }
+        
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const username = usernameInput.value.trim();
+            const passCode = passCodeInput.value.trim().toUpperCase();
+            const password = prompt("Введите пароль от вашего аккаунта " + username + ":");
+            
+            if (!password) {
+                showMessage('Необходимо ввести пароль', 'error');
+                return;
+            }
+            
+            if (!username || !passCode) {
+                showMessage('Пожалуйста, заполните все поля', 'error');
+                return;
+            }
+            
+            submitBtn.disabled = true;
+            const originalText = submitBtn.textContent;
+            submitBtn.innerHTML = 'Активация... <span class="spinner"></span>';
+            messageDiv.style.display = 'none';
+            
+            try {
+                // Логинимся с существующим аккаунтом
+                const loginResponse = await fetch('/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: username, password: password })
+                });
+                
+                if (!loginResponse.ok) {
+                    const errorData = await loginResponse.json();
+                    throw new Error(errorData.detail || 'Неверный логин или пароль');
+                }
+                
+                const tokenData = await loginResponse.json();
+                
+                // Активируем проходку
+                const activateResponse = await fetch('/auth/pass/activate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${tokenData.access_token}`
+                    },
+                    body: JSON.stringify({ pass_code: passCode })
+                });
+                
+                if (!activateResponse.ok) {
+                    const errorData = await activateResponse.json();
+                    throw new Error(errorData.detail || 'Ошибка активации проходки');
+                }
+                
+                const activateData = await activateResponse.json();
+                showMessage('✅ ' + activateData.message, 'success');
+                form.reset();
+                
+            } catch (error) {
+                console.error('Error:', error);
+                showMessage('❌ ' + error.message, 'error');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalText;
+            }
+        });
+    </script>
+</body>
+</html>
+"""
+
+
+
 # Create app with lifespan
 app = FastAPI(title="ZernMC Launcher Server", lifespan=lifespan)
 
@@ -142,6 +469,17 @@ async def root():
 async def health():
     """Health check endpoint"""
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+
+
+# ====================== WEB ИНТЕРФЕЙС ДЛЯ АКТИВАЦИИ ПРОХОДКИ ======================
+
+@app.get("/activate-pass")
+async def activate_pass_page():
+    """Веб-интерфейс для активации проходки"""
+    return Response(
+        content=ACTIVATE_PASS_HTML,
+        media_type="text/html"
+    )
 
 
 # ====================== ЭНДПОИНТЫ ДЛЯ ПАКОВ ======================

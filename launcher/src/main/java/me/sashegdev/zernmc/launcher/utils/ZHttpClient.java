@@ -3,6 +3,8 @@ package me.sashegdev.zernmc.launcher.utils;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import me.sashegdev.zernmc.launcher.auth.AuthManager;
+
 import java.io.IOException;
 import java.net.URI;
 import java.net.URLEncoder;
@@ -380,13 +382,19 @@ public class ZHttpClient {
         }
 
         try {
-            HttpRequest request = HttpRequest.newBuilder()
+            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
                     .uri(URI.create(BASE_URL + endpoint))
                     .timeout(Duration.ofSeconds(15))
                     .header("User-Agent", "ZernMC-Launcher/1.0")
-                    .GET()
-                    .build();
+                    .GET();
 
+            // ===== ДОБАВИТЬ ТОКЕН АВТОРИЗАЦИИ =====
+            String accessToken = AuthManager.getAccessToken();
+            if (accessToken != null && !accessToken.equals("0")) {
+                requestBuilder.header("Authorization", "Bearer " + accessToken);
+            }
+
+            HttpRequest request = requestBuilder.build();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 200) {
@@ -401,19 +409,25 @@ public class ZHttpClient {
 
     private static String proxyGet(String endpoint) throws IOException {
         try {
-            HttpRequest request = HttpRequest.newBuilder()
+            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
                     .uri(URI.create(BASE_URL + "/proxy" + endpoint))
                     .timeout(Duration.ofSeconds(30))
                     .header("User-Agent", "ZernMC-Launcher/1.0")
-                    .GET()
-                    .build();
-
+                    .GET();
+        
+            // ===== ДОБАВИТЬ ТОКЕН АВТОРИЗАЦИИ =====
+            String accessToken = AuthManager.getAccessToken();
+            if (accessToken != null && !accessToken.equals("0")) {
+                requestBuilder.header("Authorization", "Bearer " + accessToken);
+            }
+        
+            HttpRequest request = requestBuilder.build();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-
+        
             if (response.statusCode() != 200) {
                 throw new IOException("HTTP " + response.statusCode());
             }
-
+        
             proxySuccessCount++;
             return response.body();
         } catch (Exception e) {

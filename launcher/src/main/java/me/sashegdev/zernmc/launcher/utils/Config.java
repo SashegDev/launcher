@@ -10,6 +10,8 @@ public class Config {
     private static final Path CONFIG_DIR = Path.of(System.getProperty("user.home"), ".zernmc");
     private static final Path CONFIG_FILE = CONFIG_DIR.resolve("launcher.properties");
 
+    private static final String BUILD_PROFILE = System.getProperty("build.profile", "global");
+
     private static final Properties props = new Properties();
 
     // Настройки
@@ -81,6 +83,14 @@ public class Config {
     // Getters & Setters
     public static int getMaxMemory() {
         return maxMemory;
+    }
+
+    public static boolean isZernMCBuild() {
+        return "zernmc".equalsIgnoreCase(BUILD_PROFILE);
+    }
+
+    public static boolean isGlobalBuild() {
+        return !isZernMCBuild();
     }
 
     public static void setMaxMemory(int memory) {

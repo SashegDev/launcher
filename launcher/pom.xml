@@ -153,4 +153,29 @@
             </plugin>
         </plugins>
     </build>
+    <profiles>
+        <!-- ==================== GLOBAL ==================== -->
+        <profile>
+            <id>global</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <properties>
+                <build.profile>global</build.profile>
+                <launcher.title>ZernMC Launcher</launcher.title>
+                <server.url>http://87.120.187.36:1582</server.url>
+                <!-- Можно добавить флаги для отключения некоторых фич -->
+            </properties>
+        </profile>
+
+        <!-- ==================== ZERNMC ==================== -->
+        <profile>
+            <id>zernmc</id>
+            <properties>
+                <build.profile>zernmc</build.profile>
+                <launcher.title>ZernMC Private Launcher</launcher.title>
+                <server.url>http://87.120.187.36:1582</server.url>
+            </properties>
+        </profile>
+    </profiles>
 </project>

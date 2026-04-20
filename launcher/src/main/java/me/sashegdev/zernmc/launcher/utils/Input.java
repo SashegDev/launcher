@@ -19,6 +19,7 @@ public class Input {
     }
 
     public static String readLine(String prompt) {
+        flushInput(); // Очищаем буфер
         System.out.print(prompt);
         return scanner.nextLine().trim();
     }
@@ -78,5 +79,19 @@ public class Input {
      */
     public static void close() {
         scanner.close();
+    }
+
+
+    /**
+     * Очищает буфер ввода от оставшихся символов
+     */
+    public static void flushInput() {
+        try {
+            while (System.in.available() > 0) {
+                System.in.read();
+            }
+        } catch (IOException e) {
+            // Игнорируем
+        }
     }
 }
