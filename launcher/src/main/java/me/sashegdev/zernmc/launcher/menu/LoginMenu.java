@@ -148,14 +148,46 @@ public class LoginMenu {
      * Читаем пароль — стараемся скрыть вывод через Console,
      * если недоступно (IDE/терминал без TTY) — читаем обычным способом.
      */
-    private String readPassword(String prompt) {
-        java.io.Console console = System.console();
-        if (console != null) {
-            char[] chars = console.readPassword(prompt);
-            return chars != null ? new String(chars) : "";
+    private String readPassword(String prompt) throws IOException {
+        // Создаём временный терминал для ввода пароля
+        org.jline.terminal.Terminal passTerminal = org.jline.terminal.TerminalBuilder.builder()
+                .system(true)
+                .jna(true)
+                .build();
+        
+        passTerminal.enterRawMode();
+        passTerminal.writer().print(prompt);
+        passTerminal.writer().flush();
+        
+        StringBuilder password = new StringBuilder();
+        
+        try {
+            while (true) {
+                int key = passTerminal.reader().read();
+                
+                if (key == 13 || key == 10) { // Enter
+                    passTerminal.writer().println();
+                    break;
+                } else if (key == 127 || key == 8) { // Backspace
+                    if (password.length() > 0) {
+                        password.setLength(password.length() - 1);
+                        passTerminal.writer().print("\b \b");
+                        passTerminal.writer().flush();
+                    }
+                } else if (key == 3) { // Ctrl+C
+                    passTerminal.writer().println();
+                    System.exit(0);
+                } else if (key >= 32 && key < 127) { // Печатные символы
+                    password.append((char) key);
+                    passTerminal.writer().print('*');
+                    passTerminal.writer().flush();
+                }
+            }
+        } finally {
+            passTerminal.close();
         }
-        // Fallback: в IDE пароль будет виден
-        return Input.readLine(prompt);
+        
+        return password.toString();
     }
 
     private void printBanner() {

@@ -91,6 +91,24 @@
       </plugin>
     </plugins>
   </build>
+  <profiles>
+    <profile>
+      <id>global</id>
+      <properties>
+        <launcher.title>ZernMC Launcher</launcher.title>
+        <build.profile>global</build.profile>
+        <server.url>http://87.120.187.36:1582</server.url>
+      </properties>
+    </profile>
+    <profile>
+      <id>zernmc</id>
+      <properties>
+        <launcher.title>ZernMC Private Launcher</launcher.title>
+        <build.profile>zernmc</build.profile>
+        <server.url>http://87.120.187.36:1582</server.url>
+      </properties>
+    </profile>
+  </profiles>
   <properties>
     <maven.compiler.target>21</maven.compiler.target>
     <mainClass>me.sashegdev.zernmc.launcher.Main</mainClass>

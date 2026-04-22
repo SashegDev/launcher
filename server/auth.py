@@ -614,7 +614,33 @@ async def refresh(body: dict, request: Request):
         log_audit(user["id"], "refresh_token", f"Token refreshed from {ip}", ip)
         
         return {
-            "access_token": new_access_token,
-            "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-            "token_type": "bearer"
+            "passes": passes,
+            "has_active": any(p["is_active"] for p in passes)
         }
+    finally:
+        conn.close()
+
+@router.post("/validate")
+async def validate_token(request: Request, credentials: HTTPAuthorizationCredentials = Depends(bearer)):
+    """Validate token endpoint for Minecraft server"""
+    if not credentials:
+        raise HTTPException(401, "Требуется авторизация")
+    
+    payload = verify_jwt(credentials.credentials)
+    if not payload or payload.get("type") != "access":
+        raise HTTPException(401, "Недействительный токен")
+    
+    try:
+        body = await request.json()
+        username = body.get("username")
+        uuid = body.get("uuid")
+        
+        # Verify that token belongs to this user
+        if payload.get("username") != username or payload.get("uuid") != uuid:
+            raise HTTPException(403, "Token does not match user")
+        
+        return {"valid": True, "username": username, "uuid": uuid}
+        
+    except Exception as e:
+        logger.error(f"Token validation error: {e}")
+        raise HTTPException(400, "Invalid request")

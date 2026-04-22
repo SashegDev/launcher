@@ -272,6 +272,30 @@ public class AuthManager {
         return body.length() > 200 ? body.substring(0, 200) + "..." : body;
     }
 
+    public static boolean hasActivePass() {
+        if (!isLoggedIn()) return false;
+        try {
+            String response = ZHttpClient.get("/auth/pass/my");
+            JsonObject json = JsonParser.parseString(response).getAsJsonObject();
+            return json.has("has_active") && json.get("has_active").getAsBoolean();
+        } catch (Exception e) {
+            System.err.println(ZAnsi.red("Не удалось проверить проходки: ") + e.getMessage());
+            return false;
+        }
+    }
+    
+    public static String getPassStatus() {
+        if (!isLoggedIn()) return "Не авторизован";
+        try {
+            String response = ZHttpClient.get("/auth/pass/my");
+            JsonObject json = JsonParser.parseString(response).getAsJsonObject();
+            boolean hasActive = json.has("has_active") && json.get("has_active").getAsBoolean();
+            return hasActive ? "Есть активная проходка" : "Проходка отсутствует";
+        } catch (Exception e) {
+            return "Ошибка проверки";
+        }
+    }
+
     // ====================== ВНУТРЕННИЕ КЛАССЫ ======================
     public static class AuthSession {
         @SerializedName("access_token") public String accessToken;

@@ -6,7 +6,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>me.sashegdev</groupId>
     <artifactId>ZernMCLauncher</artifactId>
-    <version>1.0.7</version>
+    <version>1.0.8</version>
     <packaging>jar</packaging>
 
     <properties>
@@ -79,7 +79,7 @@
                                         <Implementation-Version>${project.version}</Implementation-Version>
                                         <Implementation-Title>ZernMC Launcher</Implementation-Title>
                                         <Implementation-Vendor>SashegDev</Implementation-Vendor>
-                                        <Implementation-Description>Полностью самописный Minecraft-лаунчер. Написанный SashegDev(в основном)</Implementation-Description>
+                                        <Implementation-Description>Samopisnui Minecraft-launcher. by SashegDev</Implementation-Description>
                                         <Implementation-URL>https://github.com/SashegDev/launcher</Implementation-URL>
                                     </manifestEntries>
                                 </transformer>
@@ -102,8 +102,8 @@
                             <goal>launch4j</goal>
                         </goals>
                         <configuration>
-                            <outfile>../server/builds/ZernMCLauncher.exe</outfile>
-                            <jar>../server/builds/ZernMCLauncher.jar</jar>
+                            <outfile>../server/builds/ZernMCLauncher-${project.version}.exe</outfile>
+                            <jar>../server/builds/ZernMCLauncher-${project.version}.jar</jar>
                             <headerType>console</headerType>
                             <dontWrapJar>false</dontWrapJar>
                             <jre>
@@ -113,13 +113,13 @@
                             <versionInfo>
                                 <fileVersion>${project.version}.0</fileVersion>
                                 <txtFileVersion>${project.version}</txtFileVersion>
-                                <fileDescription>ZernMC Launcher — A Little Minecraft Launcher</fileDescription>
+                                <fileDescription>ZernMC Launcher — just a Minecraft launcher</fileDescription>
                                 <productVersion>${project.version}.0</productVersion>
                                 <txtProductVersion>${project.version}</txtProductVersion>
                                 <productName>ZernMC Launcher</productName>
                                 <companyName>ZernMC(SashegDev)</companyName>
                                 <internalName>ZernMCLauncher</internalName>
-                                <originalFilename>ZernMCLauncher.exe</originalFilename>
+                                <originalFilename>ZernMCLauncher-${project.version}.exe</originalFilename>
                             </versionInfo>
                         </configuration>
                     </execution>
@@ -156,4 +156,29 @@
             </plugin>
         </plugins>
     </build>
+    <profiles>
+        <!-- ==================== GLOBAL ==================== -->
+        <profile>
+            <id>global</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <properties>
+                <build.profile>global</build.profile>
+                <launcher.title>ZernMC Launcher</launcher.title>
+                <server.url>http://87.120.187.36:1582</server.url>
+                <!-- Можно добавить флаги для отключения некоторых фич -->
+            </properties>
+        </profile>
+
+        <!-- ==================== ZERNMC ==================== -->
+        <profile>
+            <id>zernmc</id>
+            <properties>
+                <build.profile>zernmc</build.profile>
+                <launcher.title>ZernMC Private Launcher</launcher.title>
+                <server.url>http://87.120.187.36:1582</server.url>
+            </properties>
+        </profile>
+    </profiles>
 </project>
