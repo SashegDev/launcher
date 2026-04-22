@@ -6,6 +6,8 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+
+import me.sashegdev.zernmc.launcher.auth.AuthManager;
 import me.sashegdev.zernmc.launcher.utils.ProgressBar;
 import me.sashegdev.zernmc.launcher.utils.ZAnsi;
 import me.sashegdev.zernmc.launcher.utils.ZHttpClient;
@@ -37,73 +39,89 @@ public class PackDownloader {
      * Получить список доступных паков с сервера
      */
     public List<ServerPack> getAvailablePacks() throws Exception {
-        String response = ZHttpClient.get("/packs");
-        
-        // Для отладки - выведем ответ сервера
-        System.out.println(ZAnsi.cyan("Ответ сервера: " + response));
-        
-        JsonObject root = JsonParser.parseString(response).getAsJsonObject();
-        
-        // Проверяем, есть ли поле "packs"
-        if (!root.has("packs")) {
-            System.out.println(ZAnsi.yellow("Сервер вернул неожиданный формат ответа"));
-            return new ArrayList<>();
+        String accessToken = AuthManager.getAccessToken();
+        if (accessToken == null) {
+            throw new IOException("Не авторизован. Требуется проходка для просмотра сборок.");
         }
-        
+        if (!AuthManager.canViewPacks()) {
+            throw new IOException("Для просмотра сборок требуется активная проходка");
+        }
+
+        // Используем HttpURLConnection для GET с авторизацией
+        java.net.HttpURLConnection connection = null;
+        try {
+            java.net.URL url = new java.net.URL(ZHttpClient.getBaseUrl() + "/packs");
+            connection = (java.net.HttpURLConnection) url.openConnection();
+            connection.setRequestMethod("GET");
+            connection.setRequestProperty("Accept", "application/json");
+            connection.setRequestProperty("Authorization", "Bearer " + accessToken);
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(15000);
+
+            int responseCode = connection.getResponseCode();
+
+            if (responseCode == 403) {
+                throw new IOException("Для просмотра сборок требуется активная проходка");
+            }
+
+            StringBuilder response = new StringBuilder();
+            try (java.io.InputStream is = responseCode < 400 ? connection.getInputStream() : connection.getErrorStream();
+                 java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(is, "UTF-8"))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    response.append(line);
+                }
+            }
+
+            if (responseCode != 200) {
+                throw new IOException("HTTP " + responseCode);
+            }
+
+            return parsePacksResponse(response.toString());
+
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    private List<ServerPack> parsePacksResponse(String responseBody) {
+        JsonObject root = JsonParser.parseString(responseBody).getAsJsonObject();
         JsonArray packsArray = root.getAsJsonArray("packs");
         List<ServerPack> result = new ArrayList<>();
         
         for (JsonElement elem : packsArray) {
             JsonObject pack = elem.getAsJsonObject();
-            
-            // Пропускаем паки с ошибками
-            if (pack.has("error")) {
-                System.out.println(ZAnsi.yellow("Пак имеет ошибку: " + pack.get("error").getAsString()));
+
+            if (pack.has("error") || (pack.has("status") && "not_scanned".equals(pack.get("status").getAsString()))) {
                 continue;
             }
-            
-            // Пропускаем паки со статусом not_scanned
-            if (pack.has("status") && "not_scanned".equals(pack.get("status").getAsString())) {
-                System.out.println(ZAnsi.yellow("Пак " + pack.get("name").getAsString() + " не отсканирован на сервере"));
-                continue;
-            }
-            
+
             try {
-                // Пробуем получить name или pack_name (разные форматы)
-                String name = null;
-                if (pack.has("name")) {
-                    name = pack.get("name").getAsString();
-                } else if (pack.has("pack_name")) {
-                    name = pack.get("pack_name").getAsString();
-                } else {
-                    continue; // Пропускаем если нет имени
-                }
-                
+                String name = pack.get("name").getAsString();
                 int version = pack.has("version") ? pack.get("version").getAsInt() : 0;
-                
-                // Получаем остальные поля (могут отсутствовать)
                 String minecraftVersion = pack.has("minecraft_version") ? pack.get("minecraft_version").getAsString() : "unknown";
                 String loaderType = pack.has("loader_type") ? pack.get("loader_type").getAsString() : "vanilla";
-                String loaderVersion = pack.has("loader_version") && !pack.get("loader_version").isJsonNull() ? pack.get("loader_version").getAsString() : "";
+                String loaderVersion = pack.has("loader_version") && !pack.get("loader_version").isJsonNull() 
+                        ? pack.get("loader_version").getAsString() : "";
                 int filesCount = pack.has("files_count") ? pack.get("files_count").getAsInt() : 0;
-                
-                // Парсим дату, если есть
+
                 LocalDateTime updatedAt = null;
                 if (pack.has("updated_at") && !pack.get("updated_at").isJsonNull()) {
                     try {
-                        updatedAt = parseDateTime(pack.get("updated_at").getAsString());
-                    } catch (Exception e) {
-                        // Игнорируем ошибки парсинга даты
-                    }
+                        updatedAt = LocalDateTime.parse(pack.get("updated_at").getAsString(), 
+                                DateTimeFormatter.ISO_DATE_TIME);
+                    } catch (Exception ignored) {}
                 }
-                
-                result.add(new ServerPack(name, version, minecraftVersion, 
-                                         loaderType, loaderVersion, updatedAt, filesCount));
+
+                result.add(new ServerPack(name, version, minecraftVersion, loaderType, 
+                        loaderVersion, updatedAt, filesCount));
             } catch (Exception e) {
-                System.err.println(ZAnsi.yellow("Ошибка парсинга пака: " + e.getMessage()));
+                System.err.println("Ошибка парсинга пака: " + e.getMessage());
             }
         }
-        
+
         return result;
     }
 
@@ -292,22 +310,19 @@ public class PackDownloader {
      */
     private DiffResponse getDiff(String packName, Map<String, String> localFiles) throws Exception {
         String json = gson.toJson(localFiles);
-    
-        System.out.println(ZAnsi.cyan("Отправка diff запроса для " + packName));
-        System.out.println(ZAnsi.cyan("JSON размер: " + json.length() + " байт"));
-        System.out.println(ZAnsi.cyan("JSON тело: " + json));
-    
-        String baseUrl = ZHttpClient.getBaseUrl();
-        if (baseUrl.endsWith("/")) {
-            baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
+
+        // Получаем токен авторизации
+        String accessToken = AuthManager.getAccessToken();
+        if (accessToken == null) {
+            throw new IOException("Не авторизован. Требуется проходка для скачивания сборок.");
         }
-        String url = baseUrl + "/pack/" + packName + "/diff";
-        
-        System.out.println(ZAnsi.cyan("URL: " + url));
-    
-        // ПРОБЛЕМА: стандартный HttpClient может отправлять chunked encoding
-        // РЕШЕНИЕ: используем HttpURLConnection вместо HttpClient
-        
+        if (!AuthManager.canDownloadPacks()) {
+            throw new IOException("Для скачивания сборок требуется активная проходка");
+        }
+
+        String url = ZHttpClient.getBaseUrl() + "/pack/" + packName + "/diff";
+
+        // Используем HttpURLConnection для полного контроля
         java.net.HttpURLConnection connection = null;
         try {
             java.net.URL urlObj = new java.net.URL(url);
@@ -315,21 +330,21 @@ public class PackDownloader {
             connection.setRequestMethod("POST");
             connection.setRequestProperty("Content-Type", "application/json");
             connection.setRequestProperty("Accept", "application/json");
+            connection.setRequestProperty("Authorization", "Bearer " + accessToken);
             connection.setRequestProperty("Content-Length", String.valueOf(json.getBytes("UTF-8").length));
             connection.setDoOutput(true);
             connection.setConnectTimeout(30000);
             connection.setReadTimeout(30000);
-            
+
             // Отправляем JSON
             try (java.io.OutputStream os = connection.getOutputStream()) {
                 byte[] input = json.getBytes("UTF-8");
                 os.write(input, 0, input.length);
                 os.flush();
             }
-            
+
             int responseCode = connection.getResponseCode();
-            System.out.println(ZAnsi.cyan("Diff ответ: HTTP " + responseCode));
-            
+
             // Читаем ответ
             StringBuilder response = new StringBuilder();
             try (java.io.InputStream is = responseCode < 400 ? connection.getInputStream() : connection.getErrorStream();
@@ -339,21 +354,34 @@ public class PackDownloader {
                     response.append(line);
                 }
             }
-            
+
             String responseBody = response.toString();
-            System.out.println(ZAnsi.cyan("Тело ответа: " + responseBody));
-            
-            if (responseCode != 200) {
-                throw new IOException("HTTP " + responseCode + ": " + responseBody);
+
+            if (responseCode == 403) {
+                throw new IOException("Для скачивания сборок требуется активная проходка. Обратитесь к администратору.");
             }
-            
+
+            if (responseCode != 200) {
+                throw new IOException("HTTP " + responseCode + ": " + extractErrorFromResponse(responseBody));
+            }
+
             return gson.fromJson(responseBody, DiffResponse.class);
-            
+
         } finally {
             if (connection != null) {
                 connection.disconnect();
             }
         }
+    }
+
+    private String extractErrorFromResponse(String body) {
+        try {
+            JsonObject json = JsonParser.parseString(body).getAsJsonObject();
+            if (json.has("detail")) {
+                return json.get("detail").getAsString();
+            }
+        } catch (Exception ignored) {}
+        return body.length() > 200 ? body.substring(0, 200) + "..." : body;
     }
 
     /**
@@ -484,17 +512,6 @@ public class PackDownloader {
             sb.append(String.format("%02x", b));
         }
         return sb.toString();
-    }
-
-    /**
-     * Парсинг даты из строки
-     */
-    private LocalDateTime parseDateTime(String dateTimeStr) {
-        try {
-            return LocalDateTime.parse(dateTimeStr, DATE_FORMATTER);
-        } catch (Exception e) {
-            return null;
-        }
     }
 
     // ====================== Вложенные классы ======================

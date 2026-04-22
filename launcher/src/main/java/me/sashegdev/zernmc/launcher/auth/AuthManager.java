@@ -10,9 +10,12 @@ import me.sashegdev.zernmc.launcher.utils.ZAnsi;
 import me.sashegdev.zernmc.launcher.utils.ZHttpClient;
 
 import java.io.IOException;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 public class AuthManager {
 
@@ -20,6 +23,18 @@ public class AuthManager {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     private static volatile AuthSession session = null;
+    private static volatile UserInfo userInfo = null;
+
+    // === Роли ===
+    public static final int ROLE_USER = 0;
+    public static final int ROLE_PASS_HOLDER = 1;
+    public static final int ROLE_MODERATOR = 2;
+    public static final int ROLE_ELDER = 3;
+    public static final int ROLE_CREATOR = 4;
+
+    // === Права доступа ===
+    public static final String PERM_VIEW_PACKS = "view_packs";
+    public static final String PERM_DOWNLOAD_PACK = "download_pack";
 
     public static boolean loadSavedSession() {
         if (!Files.exists(AUTH_FILE)) return false;
@@ -29,6 +44,8 @@ public class AuthManager {
             if (loaded == null || loaded.accessToken == null) return false;
 
             session = loaded;
+            userInfo = fetchUserInfo();
+
             if (isAccessTokenExpired()) {
                 return tryRefresh();
             }
@@ -38,6 +55,7 @@ public class AuthManager {
         }
     }
 
+    // ====================== АВТОРИЗАЦИЯ ======================
     public static AuthResult login(String username, String password) {
         return authRequest("/auth/login", username, password);
     }
@@ -49,17 +67,13 @@ public class AuthManager {
     private static AuthResult authRequest(String endpoint, String username, String password) {
         try {
             String body = GSON.toJson(new LoginRequest(username, password));
-            
-            //System.out.println(ZAnsi.cyan("[AUTH] Отправка запроса: " + endpoint));
-            
             SimpleHttpResponse resp = post(endpoint, body);
-            
-            //System.out.println(ZAnsi.cyan("[AUTH] Ответ: HTTP " + resp.statusCode()));
-            
+
             if (resp.statusCode() == 200) {
                 session = GSON.fromJson(resp.body(), AuthSession.class);
                 session.expiresAt = System.currentTimeMillis() / 1000L + session.expiresIn;
                 saveSession();
+                userInfo = fetchUserInfo();
                 return AuthResult.ok();
             } else if (resp.statusCode() == 422) {
                 return AuthResult.fail("Ошибка валидации: " + extractError(resp.body()));
@@ -67,7 +81,6 @@ public class AuthManager {
                 return AuthResult.fail(extractError(resp.body()));
             }
         } catch (Exception e) {
-            //System.err.println(ZAnsi.red("[AUTH] Исключение: " + e.getMessage()));
             e.printStackTrace();
             return AuthResult.fail("Ошибка соединения: " + e.getMessage());
         }
@@ -75,11 +88,12 @@ public class AuthManager {
 
     public static void logout() {
         if (session != null && session.refreshToken != null) {
-            try { 
-                post("/auth/logout", "{\"refresh_token\":\"" + session.refreshToken + "\"}"); 
+            try {
+                post("/auth/logout", "{\"refresh_token\":\"" + session.refreshToken + "\"}");
             } catch (Exception ignored) {}
         }
         session = null;
+        userInfo = null;
         try { Files.deleteIfExists(AUTH_FILE); } catch (Exception ignored) {}
     }
 
@@ -113,16 +127,18 @@ public class AuthManager {
         try {
             String body = "{\"refresh_token\":\"" + session.refreshToken + "\"}";
             SimpleHttpResponse resp = post("/auth/refresh", body);
-            
+
             if (resp.statusCode() == 200) {
                 AuthSession newSession = GSON.fromJson(resp.body(), AuthSession.class);
                 newSession.expiresAt = System.currentTimeMillis() / 1000L + newSession.expiresIn;
                 session = newSession;
+                userInfo = fetchUserInfo();
                 saveSession();
                 return true;
             }
         } catch (Exception ignored) {}
         session = null;
+        userInfo = null;
         try { Files.deleteIfExists(AUTH_FILE); } catch (Exception ignored) {}
         return false;
     }
@@ -136,19 +152,82 @@ public class AuthManager {
         }
     }
 
+    // ==================== ПОЛУЧЕНИЕ ИНФОРМАЦИИ О ПОЛЬЗОВАТЕЛЕ ====================
+    private static UserInfo fetchUserInfo() {
+        if (!isLoggedIn() || session.accessToken == null) return null;
+
+        try {
+            // Используем существующий метод ZHttpClient.get() + вручную добавляем токен
+            java.net.HttpURLConnection conn = null;
+            try {
+                URL url = new URL(ZHttpClient.getBaseUrl() + "/admin/me");
+                conn = (java.net.HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("GET");
+                conn.setRequestProperty("Accept", "application/json");
+                conn.setRequestProperty("Authorization", "Bearer " + session.accessToken);
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
+
+                int responseCode = conn.getResponseCode();
+                if (responseCode != 200) return null;
+
+                StringBuilder response = new StringBuilder();
+                try (var reader = new java.io.BufferedReader(
+                        new java.io.InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        response.append(line);
+                    }
+                }
+                return GSON.fromJson(response.toString(), UserInfo.class);
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        } catch (Exception e) {
+            System.err.println("Не удалось получить UserInfo: " + e.getMessage());
+            return null;
+        }
+    }
+
+    // ==================== ПРОВЕРКИ ПРАВ ====================
+    public static boolean hasPass() {
+        if (userInfo != null) return userInfo.has_pass;
+        return getRole() >= ROLE_PASS_HOLDER;
+    }
+
+    public static boolean canViewPacks() {
+        if (userInfo != null && userInfo.permissions != null) {
+            return userInfo.permissions.contains(PERM_VIEW_PACKS);
+        }
+        return hasPass(); // fallback для старых аккаунтов
+    }
+
+    public static boolean canDownloadPacks() {
+        if (userInfo != null && userInfo.permissions != null) {
+            return userInfo.permissions.contains(PERM_DOWNLOAD_PACK);
+        }
+        return hasPass(); // fallback
+    }
+
+    public static int getRole() {
+        return session != null ? session.role : ROLE_USER;
+    }
+
+    // ====================== POST ======================
     private static SimpleHttpResponse post(String endpoint, String jsonBody) throws Exception {
         String fullUrl = ZHttpClient.getBaseUrl() + endpoint;
+        HttpURLConnection conn = null;
 
-        java.net.HttpURLConnection conn = null;
         try {
-            java.net.URL url = java.net.URI.create(fullUrl).toURL();
-            conn = (java.net.HttpURLConnection) url.openConnection();
+            URL url = new URL(fullUrl);
+            conn = (HttpURLConnection) url.openConnection();
+
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
             conn.setRequestProperty("Accept", "application/json");
             conn.setRequestProperty("User-Agent", "ZernMC-Launcher/1.0");
+            conn.setRequestProperty("Connection", "close");
 
-            // Добавляем токен авторизации, если есть сессия
             if (session != null && session.accessToken != null) {
                 conn.setRequestProperty("Authorization", "Bearer " + session.accessToken);
             }
@@ -157,19 +236,19 @@ public class AuthManager {
             conn.setConnectTimeout(15000);
             conn.setReadTimeout(15000);
 
-            try (java.io.OutputStream os = conn.getOutputStream()) {
-                byte[] input = jsonBody.getBytes(StandardCharsets.UTF_8);
-                os.write(input, 0, input.length);
+            byte[] input = jsonBody.getBytes(StandardCharsets.UTF_8);
+            conn.setFixedLengthStreamingMode(input.length);
+
+            try (var os = conn.getOutputStream()) {
+                os.write(input);
+                os.flush();
             }
 
             int statusCode = conn.getResponseCode();
-
-            java.io.InputStream is = (statusCode >= 200 && statusCode < 300) 
-                ? conn.getInputStream() 
-                : conn.getErrorStream();
+            var is = (statusCode >= 200 && statusCode < 300) ? conn.getInputStream() : conn.getErrorStream();
 
             String responseBody;
-            try (java.util.Scanner scanner = new java.util.Scanner(is, StandardCharsets.UTF_8.name())) {
+            try (var scanner = new java.util.Scanner(is, StandardCharsets.UTF_8.name())) {
                 responseBody = scanner.useDelimiter("\\A").hasNext() ? scanner.next() : "";
             }
 
@@ -183,19 +262,13 @@ public class AuthManager {
     private static String extractError(String body) {
         try {
             JsonObject json = JsonParser.parseString(body).getAsJsonObject();
-            
             if (json.has("detail")) {
                 if (json.get("detail").isJsonArray()) {
-                    return json.getAsJsonArray("detail").get(0).getAsJsonObject()
-                            .get("msg").getAsString();
+                    return json.getAsJsonArray("detail").get(0).getAsJsonObject().get("msg").getAsString();
                 }
                 return json.get("detail").getAsString();
             }
-            if (json.has("error")) {
-                return json.get("error").getAsString();
-            }
         } catch (Exception ignored) {}
-        
         return body.length() > 200 ? body.substring(0, 200) + "..." : body;
     }
 
@@ -224,7 +297,6 @@ public class AuthManager {
     }
 
     // ====================== ВНУТРЕННИЕ КЛАССЫ ======================
-
     public static class AuthSession {
         @SerializedName("access_token") public String accessToken;
         @SerializedName("refresh_token") public String refreshToken;
@@ -232,12 +304,30 @@ public class AuthManager {
         public transient long expiresAt;
         public String username;
         public String uuid;
+        public int role;
+    }
+
+    public static class UserInfo {
+        public int id;
+        public String username;
+        public String uuid;
+        public int role;
+        public String role_name;
+        public boolean has_pass;
+        public List<String> permissions;
+
+        public boolean hasPermission(String perm) {
+            return permissions != null && permissions.contains(perm);
+        }
     }
 
     private static class LoginRequest {
         final String username;
         final String password;
-        LoginRequest(String u, String p) { this.username = u; this.password = p; }
+        LoginRequest(String u, String p) {
+            this.username = u;
+            this.password = p;
+        }
     }
 
     public static class AuthResult {
@@ -253,12 +343,12 @@ public class AuthManager {
 class SimpleHttpResponse {
     final int statusCode;
     final String body;
-    
+
     SimpleHttpResponse(int statusCode, String body) {
         this.statusCode = statusCode;
         this.body = body;
     }
-    
+
     int statusCode() { return statusCode; }
     String body() { return body; }
 }

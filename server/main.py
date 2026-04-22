@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -8,6 +8,9 @@ from cachetools import TTLCache
 import logging
 from datetime import datetime
 from uvicorn.protocols.http.httptools_impl import HttpToolsProtocol
+
+from cachetools import TTLCache
+from urllib.parse import urlparse
 
 from pack_manager import DATA_DIR, scan_pack, get_cached_manifest, PACKS_DIR
 from models import PackMeta
@@ -21,7 +24,8 @@ import httpx
 import base64
 from fastapi.responses import StreamingResponse
 
-from auth import router as auth_router, init_db, verify_jwt
+from auth import get_current_user, router as auth_router, init_db, verify_jwt
+from roles import Permissions, has_permission
 
 logger = structlog.get_logger(__name__)
 
@@ -53,6 +57,8 @@ async def lifespan(app: FastAPI):
     BUILDS_DIR.mkdir(exist_ok=True)
     PACKS_DIR.mkdir(exist_ok=True)
     DATA_DIR.mkdir(exist_ok=True)
+
+    BLOCKED_HOSTS = []
 
     init_db()
 
@@ -485,9 +491,16 @@ async def activate_pass_page():
 # ====================== ЭНДПОИНТЫ ДЛЯ ПАКОВ ======================
 
 @app.get("/packs")
-async def list_packs():
-    """List all available packs"""
-    logger = logging.getLogger(__name__)
+async def list_packs(current_user: dict = Depends(get_current_user)):
+    """List all available packs - требует проходку для просмотра"""
+    
+    # Проверяем, есть ли право на просмотр сборок
+    if not has_permission(current_user["role"], Permissions.VIEW_PACKS):
+        raise HTTPException(
+            status_code=403, 
+            detail="Для просмотра сборок требуется активная проходка"
+        )
+    
     packs = []
     
     for pack_dir in PACKS_DIR.iterdir():
@@ -497,7 +510,6 @@ async def list_packs():
                 try:
                     with open(meta_path, 'r', encoding='utf-8') as f:
                         meta = json.load(f)
-                        # Исправлено: конвертируем updated_at в строку если это datetime
                         updated_at = meta.get("updated_at")
                         if updated_at and isinstance(updated_at, datetime):
                             updated_at = updated_at.isoformat()
@@ -527,11 +539,22 @@ async def list_packs():
 
 
 @app.post("/pack/{pack_name}/diff")
-async def get_pack_diff(pack_name: str, request: Request):
-    """
-    Client sends: { "mods/jei.jar": "sha256_hash", ... }
+async def get_pack_diff(
+    pack_name: str, 
+    request: Request,
+    current_user: dict = Depends(get_current_user)  # Добавляем зависимость
+):
+    """Client sends: { "mods/jei.jar": "sha256_hash", ... }
     Server returns diff information
-    """
+    ТРЕБУЕТ ПРОХОДКУ ДЛЯ СКАЧИВАНИЯ"""
+    
+    # Проверяем наличие проходки
+    if not has_permission(current_user["role"], Permissions.DOWNLOAD_PACK):
+        raise HTTPException(
+            status_code=403, 
+            detail="Для скачивания сборок требуется активная проходка. Обратитесь к администратору."
+        )
+    
     client_ip = request.client.host if request.client else "unknown"
     
     # Читаем тело запроса
@@ -833,12 +856,7 @@ async def get_launcher_full_info():
 proxy_client = httpx.AsyncClient(timeout=60.0, follow_redirects=True)
 
 # Кэш для часто запрашиваемых данных (5 минут)
-from cachetools import TTLCache
 proxy_cache = TTLCache(maxsize=50, ttl=300)
-
-# Список заблокированных/проблемных хостов (можно обновлять)
-BLOCKED_HOSTS = []
-
 
 @app.get("/proxy/fabric/versions/loader")
 async def proxy_fabric_versions(request: Request):
@@ -886,7 +904,6 @@ async def proxy_fabric_installer_latest(request: Request):
         xml = response.text
         
         # Парсим последнюю версию из XML
-        import re
         match = re.search(r'<latest>([^<]+)</latest>', xml)
         if match:
             version = match.group(1)
@@ -1084,7 +1101,6 @@ async def proxy_download(request: Request):
     ]
     
     # Проверяем, что URL ведет на разрешенный домен
-    from urllib.parse import urlparse
     parsed = urlparse(url)
     domain = parsed.netloc.lower()
     
