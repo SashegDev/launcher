@@ -425,3 +425,28 @@ async def get_my_passes(credentials: HTTPAuthorizationCredentials = Depends(bear
         }
     finally:
         conn.close()
+
+@router.post("/validate")
+async def validate_token(request: Request, credentials: HTTPAuthorizationCredentials = Depends(bearer)):
+    """Validate token endpoint for Minecraft server"""
+    if not credentials:
+        raise HTTPException(401, "Требуется авторизация")
+    
+    payload = verify_jwt(credentials.credentials)
+    if not payload or payload.get("type") != "access":
+        raise HTTPException(401, "Недействительный токен")
+    
+    try:
+        body = await request.json()
+        username = body.get("username")
+        uuid = body.get("uuid")
+        
+        # Verify that token belongs to this user
+        if payload.get("username") != username or payload.get("uuid") != uuid:
+            raise HTTPException(403, "Token does not match user")
+        
+        return {"valid": True, "username": username, "uuid": uuid}
+        
+    except Exception as e:
+        logger.error(f"Token validation error: {e}")
+        raise HTTPException(400, "Invalid request")
