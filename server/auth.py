@@ -614,11 +614,9 @@ async def refresh(body: dict, request: Request):
         log_audit(user["id"], "refresh_token", f"Token refreshed from {ip}", ip)
         
         return {
-            "passes": passes,
-            "has_active": any(p["is_active"] for p in passes)
+            "access_token": new_access_token,
+            "token_type": "bearer"
         }
-    finally:
-        conn.close()
 
 @router.post("/validate")
 async def validate_token(request: Request, credentials: HTTPAuthorizationCredentials = Depends(bearer)):
